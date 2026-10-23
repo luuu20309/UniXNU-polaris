@@ -36,7 +36,7 @@ jobs:
         if: always()
         run: |
           TREE=out/native/polaris/tree
-          if [ -d "$TREE/.cache/xnu-work" ]; then
+          if [ -d "$TREE/.cache/xnu-work" ] && [ -d "$TREE/build/xnu" ]; then
             tar czf out/native-buildtree.tgz --exclude='.git' --exclude='*.o' --exclude='*.cpo' --exclude='*.a' -C "$TREE" .cache/xnu-work .cache/fakeroot build/xnu
           fi
       - uses: actions/upload-artifact@v4

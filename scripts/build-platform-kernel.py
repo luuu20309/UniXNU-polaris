@@ -64,6 +64,12 @@ def main():
         shutil.copyfile(override, patch_copy / override.name)
     patch_link.unlink()
     patch_link.symlink_to(patch_copy.resolve())
+    # The pinned base predates the upstream CI rate-limit fix: its prepare-xnu-source.py
+    # calls the GitHub contents API anonymously, which hosted runners exhaust (HTTP 403).
+    # Overlay the merged upstream revision (same interface) that sends GITHUB_TOKEN
+    # to api.github.com and raw.githubusercontent.com only.
+    shutil.copyfile(ROOT / 'scripts/overlay/prepare-xnu-source.py',
+                    ctx.tree / 'scripts/prepare-xnu-source.py')
     env = {key: value for key, value in os.environ.items() if not key.startswith(('XNU_', 'UNIXNU_'))}
     env.update(kernel.xnu_env(ctx))
     env.update(kernel.version_env(modules))
