@@ -48,9 +48,3 @@ The source-kernel platform milestone builds on macOS with Xcode via
 *Darwin 23 platform kernel* workflow. The full prelink, firmware, payload
 and userdata stages are intentionally not wired: no polaris UEFI port exists
 and the original-component prelink target is undecided.
-
-## Maintenance
-
-The maintainer owns the repository and its release decisions. UniXNU
-documentation lists the port and its state; it does not take over
-maintenance.

@@ -50,8 +50,3 @@ python3 ../UniXNU/unixnu status -D . --out out/driver
 `scripts/build-platform-kernel.py` 构建，或使用仓库的 *Darwin 23
 platform kernel* workflow。完整 prelink、固件、payload 与 userdata 阶段
 有意未接线：polaris UEFI 移植尚不存在，原厂组件 prelink 目标未定。
-
-## 维护
-
-维护者拥有该仓库及其发布决定。UniXNU 文档只记录移植及其状态，不接管
-维护。
