@@ -57,6 +57,15 @@ workflow pass, then dispatch the kernel workflow.
   (restores the same headers through the git protocol) fixed it. The third
   attempt exposed the missing device archive builder, now added as
   `scripts/build-arm-driver.py`.
+- QEMU native platform check: **passed** in [run 40030970744](https://github.com/luuu20309/UniXNU-polaris/actions/runs/40030970744)
+  (2026-10-24): the actual source kernel registered ArmCpu, reached GIC
+  ready and advanced timer IRQs 0 -> 1 -> 3 under QEMU virt (cortex-a76,
+  single CPU); counter snapshots in `out/platform-check/report.json`.
+  Self-IPI was sent but not received — same known boundary as the sweet
+  platform milestone, reported separately and not part of the pass
+  criterion. Emulated platform only. The `native-check` CI job now runs this
+  after every kernel build and assembles the route-A payload ESP
+  (`scripts/make-payload-esp.py`).
 - EFI/QEMU: **passed in CI** (same run as host).
 - Phone: nothing. `serial=3` in `board.toml` is the UniXNU convention; polaris
   has no wired debug UART, so treat it as inert until a console path exists.
