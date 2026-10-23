@@ -41,13 +41,23 @@ workflow pass, then dispatch the kernel workflow.
 - Host: `python -m unittest discover -s tests` — 6 ADT ABI tests pass
   (GIC translation, NVRAM proxy, banks, CPU prefix boundary, rejections).
   `check-cpu-prefix.py` exercised on 1-CPU and 8-CPU ADTs, including refusal
-  cases. CI adds the clang-compiled timer/window tests.
+  cases. CI adds the clang-compiled timer/window tests. CI **passed** on
+  2026-10-23 (run 40022378017: host and EFI/QEMU both green after one
+  network-flaked retry).
 - Integration: `unixnu defconfig polaris_defconfig` and `unixnu status`
   resolve ArmCpu and DarwinBoot from this repository, everything else from
   UniXNU `37987aea` (verified locally with the base checkout at that commit).
-- macOS kernel: **not run** (requires Xcode; the CI workflow is the runner).
-- EFI/QEMU: **not run locally** (requires Linux + cross toolchain; CI is the
-  runner).
+- macOS kernel: **built successfully** in [CI run 40028991145](https://github.com/luuu20309/UniXNU-polaris/actions/runs/40028991145)
+  (2026-10-23): `kernel.macho` 19,299,712 bytes, SHA256
+  `761e2def7fd86cffafef39892d172ac4c5bfd6e7d6c142d044fa721259a258e7`,
+  plain ARM64 Mach-O (`feedfacf` / `0100000c`), final configured link passed,
+  no original Apple components prelinked, no hardware or userland boot. The
+  first two attempts hit the GitHub contents-API rate limit in the pinned
+  base's `prepare-xnu-source.py`; the `scripts/overlay/` git-only replacement
+  (restores the same headers through the git protocol) fixed it. The third
+  attempt exposed the missing device archive builder, now added as
+  `scripts/build-arm-driver.py`.
+- EFI/QEMU: **passed in CI** (same run as host).
 - Phone: nothing. `serial=3` in `board.toml` is the UniXNU convention; polaris
   has no wired debug UART, so treat it as inert until a console path exists.
 
