@@ -63,16 +63,17 @@ workflow pass, then dispatch the kernel workflow.
 
 ## Next steps, in order
 
-1. Push this repository; let `host and EFI checks` go green; dispatch
-   `Darwin 23 platform kernel` and record the artifact SHA256 here.
-2. Port sweet's `check-platform-kernel.py` QEMU native check (CPU registration
-   + advancing timer IRQs before panic) to consume the polaris kernel.macho;
-   single-CPU first, self-IPI reported separately.
-3. polaris UEFI firmware: a Mu-Silicium/edk2 SDM845 platform package
-   (Renegade-Project has SDM845 UEFI work to reference). Without it there is
-   no `unixnu build firmware`, no payload boot and no phone image. The
-   `board.toml [firmware]` section is intentionally absent until then.
-4. Only after 2-3: decide the prelink target and Apple identity (an iPadOS 17
+1. ~~Push, CI green~~ (done 2026-10-23: host + EFI/QEMU green, run 40022378017).
+2. ~~Source kernel built~~ (done, run 40028991145, SHA256 above); the QEMU
+   native check runs automatically after every kernel build
+   (`scripts/check-platform-kernel.py`, wired as the `native-check` job).
+3. polaris UEFI firmware: see [research/uefi-firmware-plan.md](research/uefi-firmware-plan.md).
+   Route A reuses the proven Renegade edk2-msm polaris firmware and boots
+   UniXNU/DarwinBoot from the ESP (temporary `fastboot boot`, user approval
+   per boot); Route B extracts a Mu-Silicium `polarisPkg` from what Route A
+   proves. Without one of these there is no payload boot and no phone image;
+   `board.toml [firmware]` stays absent until Route B.
+4. Only after 3: decide the prelink target and Apple identity (an iPadOS 17
    kernelcache like sheng, or keep a source-only kernel), then userdata,
    trust-cache policy, and only then re-plan touch/display/GPU as board-gated
    Darwin 23 drivers.
