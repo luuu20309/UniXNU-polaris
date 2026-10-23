@@ -66,6 +66,15 @@ workflow pass, then dispatch the kernel workflow.
   criterion. Emulated platform only. The `native-check` CI job now runs this
   after every kernel build and assembles the route-A payload ESP
   (`scripts/make-payload-esp.py`).
+- Route-A payload ESP artifact: first produced and verified in
+  [run 40032226971](https://github.com/luuu20309/UniXNU-polaris/actions/runs/40032226971)
+  (2026-10-24, kernel SHA256
+  `22c42d2e919a066a624025d7bb18cd1205845bac40ca494435c4ca1e09646ac3`):
+  `platform-check-results` carries the full ESP tree
+  (`EFI/BOOT/BOOTAA64.EFI`, DarwinBoot, kernel, the **real polaris ADT**
+  with `xiaomi,polaris` / upper bank / PSCI, unixnu.toml with the board
+  command line). It is a flashing-ready ESP layout for the edk2-msm
+  firmware, **not** a boot image and not hardware-tested.
 - EFI/QEMU: **passed in CI** (same run as host).
 - Phone: nothing. `serial=3` in `board.toml` is the UniXNU convention; polaris
   has no wired debug UART, so treat it as inert until a console path exists.
