@@ -68,6 +68,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y qemu-system-arm qemu-efi-aarch64
       - name: QEMU native platform check
         run: python3 scripts/check-platform-kernel.py --kernel out/kernel/kernel.macho --efi out/efi
+      - name: Assemble the polaris payload ESP
+        run: python3 scripts/make-payload-esp.py --kernel out/kernel/kernel.macho --efi out/efi --out out/polaris-esp --cpus 1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -76,3 +78,4 @@ jobs:
             out/platform-check/report.json
             out/platform-check/serial.log
             out/platform-check/screen.ppm
+            out/polaris-esp/
