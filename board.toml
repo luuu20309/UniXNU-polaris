@@ -1,0 +1,44 @@
+# Platform-stage device port of UniXNU to the Xiaomi Mi MIX 2S (polaris, SDM845).
+# Read NOTES.md before attempting anything beyond the host checks. No bootable
+# phone image exists for this port yet.
+
+[board]
+name = "polaris"
+soc = "SDM845"
+description = "Xiaomi Mi MIX 2S"
+kit = "polaris"
+
+[kernel]
+defconfig = "polaris_defconfig"
+archives = [
+  "build-corecrypto-14.py",
+  "build-corecrypto-14.py --namespace",
+  "build-arm-driver.py ArmDTPlatform",
+  "build-arm-driver.py ArmCpu",
+  "build-libpthread-kernel.py",
+]
+
+[payload]
+volume = "POLARISESP"
+size_mib = 96
+loader = "firmware"
+title = "polaris: UniXNU platform bring-up"
+# Default describes the 6 GiB variant upper bank, safe on both installed sizes;
+# the 8 GiB value 0xfcc00000 is selected with an explicit board override.
+dram_size = "0x7cc00000"
+panic_screen = false
+kernel_args = ["-v", "serial=3", "debug=0x14e", "kt_fixed_zones=120", "cpus=1", "armcpu-self-ipi=1"]
+
+[payload.adt]
+tool = "scripts/make-polaris-adt.py"
+owned_memory_size = "0x40000000"
+cpu_regs = "0"
+psci_method = "smc"
+
+[port]
+stage = "platform"
+hardware_tested = false
+# The old ABL-shim chain (ios16_on_polaris_mix2s, XNU 8796) reached the iOS 16
+# lock screen with touch. That evidence does not transfer to this Darwin 23
+# tree: no firmware path, prelink target, userdata geometry or Apple identity
+# has been qualified for this port, and the upstream full build is incomplete.

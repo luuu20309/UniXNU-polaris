@@ -1,0 +1,21 @@
+{
+  "UniXNU": {
+    "url": "https://github.com/UniXNU/UniXNU",
+    "commit": "37987aea410691df3c1e0e146a1bfd6127932149",
+    "local_changes": ["guard optional legacy display probe in common XNU patch overlay"]
+  },
+  "ArmCpu": {
+    "url": "https://github.com/UniXNU/ArmCpu",
+    "commit": "1951cc8444b340d7d8879e9418220cf29eb711d7",
+    "local_changes": ["ADT virtual-timer-intid selection and validation"]
+  },
+  "DarwinBoot": {
+    "url": "https://github.com/UniXNU/DarwinBoot",
+    "commit": "12bc9e23fb5f9a7d2715a9e30c021a883db0a310",
+    "local_changes": ["optional ADT allocation range", "loader-only standalone DSC"]
+  },
+  "Mu_Basecore": {
+    "url": "https://github.com/microsoft/mu_basecore",
+    "commit": "cfb93724a06ff86ff5ba971413368a7809ee42a5"
+  }
+}

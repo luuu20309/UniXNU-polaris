@@ -1,0 +1,62 @@
+name: host and EFI checks
+on:
+  push:
+    paths: ['.github/workflows/checks.yml', 'scripts/**', 'drivers/**', 'kernel-overrides/**', 'tests/**', 'board.toml', 'configs/**', 'upstream.json']
+  pull_request:
+    paths: ['.github/workflows/checks.yml', 'scripts/**', 'drivers/**', 'kernel-overrides/**', 'tests/**', 'board.toml', 'configs/**', 'upstream.json']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: sudo apt-get update && sudo apt-get install -y clang lld llvm
+      - name: Protocol and ADT checks
+        run: python3 scripts/check-host.py
+      - name: CPU prefix smoke
+        run: |
+          python3 scripts/make-polaris-adt.py --output out/polaris.adt
+          python3 scripts/make-polaris-adt.py --output out/polaris-full.adt --ram 8 --cpu-regs 0,0x100,0x200,0x300,0x400,0x500,0x600,0x700
+          python3 scripts/check-cpu-prefix.py out/polaris.adt --cmdline "-v serial=3 cpus=1"
+          python3 scripts/check-cpu-prefix.py out/polaris-full.adt --cmdline "cpus=4 kt_fixed_zones=120"
+          ! python3 scripts/check-cpu-prefix.py out/polaris.adt --cmdline "cpus=5"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: host-reports
+          path: |
+            out/host-tests/report.json
+            out/polaris.adt
+            out/polaris-full.adt
+  efi:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        repository: UniXNU/UniXNU
+        ref: 37987aea410691df3c1e0e146a1bfd6127932149
+        path: out/upstream
+      - uses: actions/checkout@v4
+        repository: microsoft/mu_basecore
+        ref: cfb93724a06ff86ff5ba971413368a7809ee42a5
+        path: out/upstream/package/Mu_Basecore
+      - name: Tools and EDK2 inputs
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential uuid-dev python3 clang lld llvm gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu qemu-system-arm qemu-efi-aarch64
+          git -C out/upstream/package/Mu_Basecore submodule update --init --depth 1 MdePkg/Library/BaseFdtLib/libfdt MdePkg/Library/MipiSysTLib/mipisyst BaseTools/Source/C/BrotliCompress/brotli
+      - name: EFI compilation and QEMU
+        run: python3 scripts/check-efi.py --base out/upstream
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: efi-results
+          path: |
+            out/efi-check/*.log
+            out/efi-check/report.json
+            out/efi-check/efi/Build/Out/AARCH64-DEBUG/*.efi
+            out/efi-check/loader/build/DarwinBoot/DEBUG_GCC/AARCH64/DarwinBoot.efi

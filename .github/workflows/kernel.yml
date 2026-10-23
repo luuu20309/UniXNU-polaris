@@ -1,0 +1,46 @@
+name: Darwin 23 platform kernel
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  kernel:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/checkout@v4
+        repository: UniXNU/UniXNU
+        ref: 37987aea410691df3c1e0e146a1bfd6127932149
+        path: out/upstream
+      - name: Tools
+        run: |
+          brew install cmake ninja unifdef llvm lld
+          # The late Darwin 23 source has split IPC messages. Xcode 16.2's
+          # public MIG/IIG still emit the older ABI (see sweet NOTES); this
+          # Xcode 26.2 image provides the matching generators.
+          XC=/Applications/Xcode_26.2.app
+          test -d "$XC"
+          echo "DEVELOPER_DIR=$XC/Contents/Developer" >> "$GITHUB_ENV"
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+          xcrun --sdk iphoneos --find mig
+          xcrun --sdk iphoneos --find iig
+      - name: Build source kernel and platform drivers
+        run: python3 scripts/build-platform-kernel.py --base out/upstream -j 4
+      - name: Preserve compile records and generated headers
+        if: always()
+        run: |
+          TREE=out/native/polaris/tree
+          if [ -d "$TREE/.cache/xnu-work" ]; then
+            tar czf out/native-buildtree.tgz --exclude='.git' --exclude='*.o' --exclude='*.cpo' --exclude='*.a' -C "$TREE" .cache/xnu-work .cache/fakeroot build/xnu
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: platform-kernel-results
+          path: |
+            out/native/polaris/kernel/

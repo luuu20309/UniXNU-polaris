@@ -1,0 +1,6 @@
+/out/
+/build/
+/.cache/
+/local.toml
+__pycache__/
+*.pyc

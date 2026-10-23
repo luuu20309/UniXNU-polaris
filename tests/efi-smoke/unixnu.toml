@@ -1,0 +1,14 @@
+version = 1
+[boot]
+timeout = 0
+[kits]
+autoload = false
+[[driver]]
+path = "Payloads/SampleDriver.efi"
+args = "polaris-efi-smoke"
+[[entry]]
+id = "platform"
+title = "UniXNU polaris port: EFI smoke test"
+type = "efi"
+path = "Payloads/HelloPayload.efi"
+args = "expect=driver pause shutdown"
