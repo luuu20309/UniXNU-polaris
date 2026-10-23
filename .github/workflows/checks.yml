@@ -37,13 +37,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
-        repository: UniXNU/UniXNU
-        ref: 37987aea410691df3c1e0e146a1bfd6127932149
-        path: out/upstream
+        with:
+          repository: UniXNU/UniXNU
+          ref: 37987aea410691df3c1e0e146a1bfd6127932149
+          path: out/upstream
       - uses: actions/checkout@v4
-        repository: microsoft/mu_basecore
-        ref: cfb93724a06ff86ff5ba971413368a7809ee42a5
-        path: out/upstream/package/Mu_Basecore
+        with:
+          repository: microsoft/mu_basecore
+          ref: cfb93724a06ff86ff5ba971413368a7809ee42a5
+          path: out/upstream/package/Mu_Basecore
       - name: Tools and EDK2 inputs
         run: |
           sudo apt-get update

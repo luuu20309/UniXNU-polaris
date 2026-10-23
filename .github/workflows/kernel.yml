@@ -13,9 +13,10 @@ jobs:
         with:
           python-version: '3.12'
       - uses: actions/checkout@v4
-        repository: UniXNU/UniXNU
-        ref: 37987aea410691df3c1e0e146a1bfd6127932149
-        path: out/upstream
+        with:
+          repository: UniXNU/UniXNU
+          ref: 37987aea410691df3c1e0e146a1bfd6127932149
+          path: out/upstream
       - name: Tools
         run: |
           brew install cmake ninja unifdef llvm lld
