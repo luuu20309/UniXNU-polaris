@@ -45,3 +45,34 @@ jobs:
           name: platform-kernel-results
           path: |
             out/native/polaris/kernel/
+
+  native-check:
+    needs: kernel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: platform-kernel-results
+          path: out/kernel
+      - name: EFI binaries from the latest green checks run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN=$(gh run list -R "$GITHUB_REPOSITORY" -w checks.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$RUN"
+          gh run download -R "$GITHUB_REPOSITORY" "$RUN" -n efi-results -D out/efi
+          ls out/efi out/kernel
+      - name: Tools
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-arm qemu-efi-aarch64
+      - name: QEMU native platform check
+        run: python3 scripts/check-platform-kernel.py --kernel out/kernel/kernel.macho --efi out/efi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: platform-check-results
+          path: |
+            out/platform-check/report.json
+            out/platform-check/serial.log
+            out/platform-check/screen.ppm
