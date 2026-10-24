@@ -1,0 +1,33 @@
+name: Disassemble
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: 'function symbol to disassemble (with leading _)'
+        default: '_PE_create_console'
+        type: string
+permissions:
+  contents: read
+jobs:
+  disasm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch kernel and objdump
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          KRUN=$(gh run list -R "$GITHUB_REPOSITORY" -w kernel.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          gh run download -R "$GITHUB_REPOSITORY" "$KRUN" -n platform-kernel-results -D out/kernel
+          sudo apt-get update -qq && sudo apt-get install -y -qq llvm
+          SYM="${{ inputs.symbol }}"
+          START=$(llvm-nm -n out/kernel/kernel.macho | awk -v s="$SYM" '$3==s{print $1}')
+          NEXT=$(llvm-nm -n out/kernel/kernel.macho | awk -v s="$SYM" '$3==s{found=1;next} found{print $1;exit}')
+          echo "### $SYM @ 0x$START .. 0x$NEXT"
+          llvm-objdump -d --start-address=0x$START --stop-address=0x$NEXT --no-show-raw-insn out/kernel/kernel.macho | tee disasm.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: disasm
+          path: disasm.txt
