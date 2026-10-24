@@ -23,7 +23,7 @@ jobs:
           test -f out/efi/efi/Build/Out/AARCH64-DEBUG/UniXNU.efi
       - name: Assemble the probe ESP
         run: |
-          sudo apt-get update && sudo apt-get install -y mtools clang llvm
+          sudo apt-get update && sudo apt-get install -y mtools clang llvm lld
           python3 scripts/make-payload-esp.py --kernel out/kernel/kernel.macho --efi out/efi --out out/polaris-esp --cpus 1
       - name: Build the FAT32 image
         run: |
