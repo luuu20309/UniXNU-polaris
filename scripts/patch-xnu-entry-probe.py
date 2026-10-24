@@ -257,15 +257,14 @@ def find_zero_window(data, start_va, size, limit_va):
     Used when the fixed per-build cave offsets do not line up with this
     kernel's padding; the emptiness test is the same one the fixed path uses,
     so a non-zero byte is never overwritten."""
-    seg = min((s for s in SEGMENTS if s[0] <= start_va < s[0] + s[1]),
-              default=None)
-    if seg is None:
-        raise SystemExit(f'{start_va:#x} is outside a loaded segment')
-    va = (start_va + 0xF) & ~0xF
-    while va + size <= min(limit_va, seg[0] + seg[1]):
-        if not any(data[file_offset(va):file_offset(va) + size]):
-            return va
-        va += 0x10
+    for seg_va, _seg_size, _seg_off, seg_filesz in sorted(SEGMENTS):
+        va = max((start_va + 0xF) & ~0xF, seg_va)
+        # Only bytes backed by the file are candidates; the window must also
+        # stay inside this segment so the probe stays within one mapping.
+        while va + size <= min(limit_va, seg_va + seg_filesz):
+            if not any(data[file_offset(va):file_offset(va) + size]):
+                return va
+            va += 0x10
     raise SystemExit(f'no zero window of {size:#x} bytes below {limit_va:#x}; refuse to guess')
 
 
