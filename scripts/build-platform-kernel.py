@@ -27,6 +27,8 @@ def main():
     parser.add_argument('--base', type=Path, required=True)
     parser.add_argument('--out', type=Path, default=ROOT / 'out/native')
     parser.add_argument('-j', '--jobs', type=int, default=4)
+    parser.add_argument('--defconfig', default='polaris_defconfig',
+                        help='configs/ name; a [kernel.prelink] section additionally prelinks against the IPSW kernelcache')
     args = parser.parse_args()
     if platform.system() != 'Darwin' or not shutil.which('xcodebuild'):
         parser.error('this step requires macOS with Xcode and the iPhoneOS SDK')
@@ -45,7 +47,7 @@ def main():
     options = cli.parser().parse_args(['build', 'kernel', '-D', str(ROOT), '--out', str(args.out.resolve()), '-j', str(args.jobs)])
     ctx = Context(options)
     ctx.work.mkdir(parents=True, exist_ok=True)
-    config = ROOT / 'configs/polaris_defconfig'
+    config = ROOT / 'configs' / args.defconfig
     ctx.config = parse_config(config.read_text())
     shutil.copyfile(config, ctx.config_path)
     modules = feeds.resolve(ctx)
@@ -112,9 +114,16 @@ def main():
     destination = ctx.work / 'kernel/kernel.macho'
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, destination)
+    prelinked = None
+    if ctx.board.get('kernel', {}).get('prelink'):
+        print('Prelink pass: composing with the original iPadOS 17 kernelcache', flush=True)
+        prelinked = kernel.prelink(ctx)
+        print(f'PASS: prelinked kernel {prelinked} sha256 '
+              f'{hashlib.sha256(prelinked.read_bytes()).hexdigest()}', flush=True)
     report = {'kernel_sha256': hashlib.sha256(data).hexdigest(), 'kernel_bytes': len(data),
               'unixnu_revision': revision, 'bootstrap_link_failed': bootstrap_failed,
-              'final_configured_link_passed': True, 'original_components_prelinked': False,
+              'final_configured_link_passed': True,
+              'original_components_prelinked': prelinked is not None,
               'hardware_booted': False, 'userland_booted': False,
               'sources': {name: module.commit for (_, name), module in modules.items() if module.commit}}
     destination.with_suffix('.json').write_text(json.dumps(report, indent=2) + '\n')
