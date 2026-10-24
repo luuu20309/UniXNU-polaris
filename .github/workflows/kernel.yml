@@ -1,6 +1,11 @@
 name: Darwin 23 platform kernel
 on:
   workflow_dispatch:
+    inputs:
+      defconfig:
+        description: 'configs/ defconfig name (polaris_defconfig or polaris_prelink_defconfig)'
+        default: 'polaris_defconfig'
+        type: string
 permissions:
   contents: read
 jobs:
@@ -31,7 +36,7 @@ jobs:
           xcrun --sdk iphoneos --find mig
           xcrun --sdk iphoneos --find iig
       - name: Build source kernel and platform drivers
-        run: python3 scripts/build-platform-kernel.py --base out/upstream -j 4
+        run: python3 scripts/build-platform-kernel.py --base out/upstream -j 4 --defconfig ${{ inputs.defconfig }}
       - name: Preserve compile records and generated headers
         if: always()
         run: |
