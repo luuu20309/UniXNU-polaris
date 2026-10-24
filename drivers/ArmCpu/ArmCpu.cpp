@@ -384,8 +384,8 @@ bool ArmCpu::start (IOService *provider)
     const uint32_t pulseBytes = args->Video.v_rowBytes * 4;   // rows 0..3, below the entry-probe bar
     OSSharedPtr<IOMemoryDescriptor> pulseMemory (IOMemoryDescriptor::withPhysicalAddress (
         static_cast<mach_vm_address_t>(args->Video.v_baseAddr), pulseBytes, kIODirectionInOut), OSNoRetain);
-    OSSharedPtr<IOMemoryMap> pulseMap;
-    if (pulseMemory) { pulseMap.reset (pulseMemory->map (kIOMapAnywhere | kIOMapInhibitCache, OSNoRetain)); }
+    OSSharedPtr<IOMemoryMap> pulseMap (pulseMemory
+        ? pulseMemory->map (kIOMapAnywhere | kIOMapInhibitCache) : nullptr, OSNoRetain);
     if (pulseMap) {
       gPulseBase = static_cast<volatile uint32_t *>(pulseMap->getVirtualAddress ());
       gPulseStridePixels = args->Video.v_rowBytes / 4;
