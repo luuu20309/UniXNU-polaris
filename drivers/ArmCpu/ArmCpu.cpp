@@ -40,6 +40,7 @@ volatile uint32_t armcpu_irq_phase = 0,armcpu_irq_id = 1023;
 // PPI 19) are delivered through the GIC. Silent without handed-over video.
 static volatile uint32_t *gPulseBase = nullptr;
 static uint32_t gPulseStridePixels = 0, gPulseWidth = 0, gPulseX = 0;
+static OSSharedPtr<IOMemoryMap> gPulseMap;
 volatile uint32_t armcpu_quiesce_calls = 0,armcpu_halt_calls = 0;
 // Secondary-CPU bring-up evidence (sheng-smp=1). Step values: 1 nub started, 2 registered, 3 start thread running,
 // 4 PSCI CPU_ON issued, 5 entered initCPU on the new core, 6 GIC redistributor ready, 7 running.
@@ -380,10 +381,17 @@ bool ArmCpu::start (IOService *provider)
 {
   const boot_args *args = reinterpret_cast<const boot_args *>(const_boot_args);
   if (!gPulseBase && args->Video.v_baseAddr != 0 && args->Video.v_depth == 32) {
-    gPulseBase = reinterpret_cast<volatile uint32_t *>(
-        ml_io_map(static_cast<vm_offset_t>(args->Video.v_baseAddr), args->Video.v_rowBytes * 4));
-    gPulseStridePixels = args->Video.v_rowBytes / 4;
-    gPulseWidth = args->Video.v_width;
+    const uint32_t pulseBytes = args->Video.v_rowBytes * 4;   // rows 0..3, below the entry-probe bar
+    OSSharedPtr<IOMemoryDescriptor> pulseMemory (IOMemoryDescriptor::withPhysicalAddress (
+        static_cast<mach_vm_address_t>(args->Video.v_baseAddr), pulseBytes, kIODirectionInOut), OSNoRetain);
+    OSSharedPtr<IOMemoryMap> pulseMap;
+    if (pulseMemory) { pulseMap.reset (pulseMemory->map (kIOMapAnywhere | kIOMapInhibitCache, OSNoRetain)); }
+    if (pulseMap) {
+      gPulseBase = static_cast<volatile uint32_t *>(pulseMap->getVirtualAddress ());
+      gPulseStridePixels = args->Video.v_rowBytes / 4;
+      gPulseWidth = args->Video.v_width & ~3u;
+      gPulseMap = std::move (pulseMap);   // keep the mapping alive for the IRQ-context writes
+    }
   }
   unsigned skip = 0;
   PE_parse_boot_argn ("armcpu-skip-gic", &skip, sizeof (skip));
