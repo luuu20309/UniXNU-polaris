@@ -36,7 +36,43 @@ workflow pass, then dispatch the kernel workflow.
 | GPU firmware metadata diagnostics (0091-0093, A630v2) | not carried; the A618 legacy HFI kit approach in UniXNU-sweet shows the shape of a future A630 kit. No GPU work is claimed |
 | Payload size bound (ABL ramdisk-to-DTB gap 14,589,952 B) | obsolete: the UEFI boot chain has no ABL DTB gap; payload sizing becomes `board.toml [payload] size_mib` |
 
-## Verification status
+## Hardware test log (2026-10-24, user-approved temporary boots)
+
+Every step below was a temporary `fastboot boot`; no partition was written
+except the one ESP flash the user explicitly approved ("整机数据都无所谓" —
+all device data expendable).
+
+1. **Renegade edk2-msm firmware runs on the phone.** Built from
+   [edk2-msm](https://github.com/edk2-porting/edk2-msm) at the fork
+   ([run 40061045714](https://github.com/luuu20309/edk2-msm/actions/runs/40061045714),
+   boot image SHA256
+   `534ebe6887b86d6c1f4cc0b6bc92651649b8aebeecd6bc6739e3d19332a5c7fb`),
+   `fastboot boot boot-polaris.img` reached the Renegade graphical menu
+   (UEFI Shell / Continue / SimpleInit / UEFI Boot Menu / Reboot), GOP alive
+   at panel resolution. SimpleInit's Mass Storage, File Manager and virtual
+   keyboard are present.
+2. **ESP flashed to userdata** (128 MiB FAT32, volume `POLARISESP`,
+   [image run 40061917191](https://github.com/luuu20309/UniXNU-polaris/actions/runs/40061917191)):
+   `fastboot flash userdata esp.img` OKAY. boot/modem/persist untouched.
+3. **UniXNU menu ran on the phone.** After the second `fastboot boot`, the
+   UniXNU boot manager rendered `UniXNU 0.1.0 | config: \EFI\UniXNU\...`
+   with the `polaris: UniXNU platform bring-up` entry, timeout countdown,
+   `drivers 1 loaded / 0 failed`, then booted it (user-photographed).
+4. **DarwinBoot hand-off verified on hardware** (user-photographed summary):
+   `va=0xfffffff007004000 pa=0x100004000` (upper-bank constraint honored),
+   `owned=0x40000000`, `video base=0x9d400000 display=1 row=4320 1080x2160
+   32bpp` (the real panel splash address), entry words read back
+   (`140006f5 d503201f ...`), `CurrentEL 1 SCTLR_EL1 0xc0180d
+   TCR_EL1 0x280803518`, then `inputs validated; exiting boot services`.
+5. **XNU kernel entry executed**: the green entry-probe bar was observed on
+   the panel (first photo). What happens after entry is not yet observable:
+   the platform kernel has no userland, and panic output is not wired to the
+   framebuffer yet.
+
+Next evidence step in flight: the ArmCpu timer heartbeat (walking green line
+on row 2, driven by real PPI-19 timer IRQs through the GIC, framebuffer
+taken from boot_args Video) — its presence distinguishes a live kernel from
+an early silent stop.
 
 - Host: `python -m unittest discover -s tests` — 6 ADT ABI tests pass
   (GIC translation, NVRAM proxy, banks, CPU prefix boundary, rejections).
