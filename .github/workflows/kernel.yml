@@ -65,7 +65,7 @@ jobs:
           gh run download -R "$GITHUB_REPOSITORY" "$RUN" -n efi-results -D out/efi
           ls out/efi out/kernel
       - name: Tools
-        run: sudo apt-get update && sudo apt-get install -y qemu-system-arm qemu-efi-aarch64
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-arm qemu-efi-aarch64 clang llvm lld
       - name: QEMU native platform check
         run: python3 scripts/check-platform-kernel.py --kernel out/kernel/kernel.macho --efi out/efi
       - name: Assemble the polaris payload ESP
