@@ -44,6 +44,8 @@ def main():
     parser.add_argument('--cpus', type=int, default=1,
                         help='CPUs described by the ADT and requested by the command line (1..8)')
     parser.add_argument('--owned-memory-size', type=lambda v: int(v, 0), default=0x40000000)
+    parser.add_argument('--no-probe', action='store_true',
+                        help='skip the boot-progress/panic probes on the ESP kernel copy')
     args = parser.parse_args()
     if not 1 <= args.cpus <= 8:
         parser.error('--cpus must be 1..8')
@@ -91,6 +93,15 @@ def main():
         target = out / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
+    # Patch the ESP COPY of the kernel (never the artifact) with the boot-progress
+    # probes: stage bars for the early MMU milestones plus the on-screen panic
+    # funnel. With no serial console on this phone these are the only early-boot
+    # signals; the timer heartbeat covers the IOKit stage.
+    if not args.no_probe:
+        import subprocess as sp
+        probe = ROOT / 'scripts/patch-xnu-entry-probe.py'
+        sp.run([sys.executable, str(probe), out / 'EFI/UniXNU/Payloads/kernel.macho',
+                '--panic-screen', '--no-reset'], check=True)
     (out / 'EFI/UniXNU/Payloads/kernel.macho.adt').write_bytes(adt)
     (out / 'EFI/UniXNU/unixnu.toml').write_text(
         'version = 1\n'

@@ -6,25 +6,31 @@ permissions:
 jobs:
   image:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch the latest kernel ESP artifact
+      - name: Fetch the latest kernel and EFI artifacts
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          RUN=$(gh run list -R "$GITHUB_REPOSITORY" -w kernel.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
-          test -n "$RUN"
-          gh run download -R "$GITHUB_REPOSITORY" "$RUN" -n platform-check-results -D out/dl
-          test -f out/dl/polaris-esp/EFI/UniXNU/Payloads/kernel.macho
-      - name: Build the FAT32 image with mtools
+          KRUN=$(gh run list -R "$GITHUB_REPOSITORY" -w kernel.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$KRUN"
+          gh run download -R "$GITHUB_REPOSITORY" "$KRUN" -n platform-kernel-results -D out/kernel
+          test -f out/kernel/kernel.macho && test -f out/kernel/kernel.json
+          CRUN=$(gh run list -R "$GITHUB_REPOSITORY" -w checks.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$CRUN"
+          gh run download -R "$GITHUB_REPOSITORY" "$CRUN" -n efi-results -D out/efi
+          test -f out/efi/efi/Build/Out/AARCH64-DEBUG/UniXNU.efi
+      - name: Assemble the probe ESP
         run: |
-          sudo apt-get update && sudo apt-get install -y mtools
+          sudo apt-get update && sudo apt-get install -y mtools clang llvm
+          python3 scripts/make-payload-esp.py --kernel out/kernel/kernel.macho --efi out/efi --out out/polaris-esp --cpus 1
+      - name: Build the FAT32 image
+        run: |
           truncate -s 128M esp.img
           mformat -i esp.img -v POLARISESP ::
-          mcopy -s -i esp.img out/dl/polaris-esp/EFI ::/
+          mcopy -s -i esp.img out/polaris-esp/EFI ::/
           mdir -i esp.img ::/EFI/UniXNU/Payloads/ > listing.txt
-          mdir -i esp.img ::/EFI/BOOT/ >> listing.txt
           cat listing.txt
       - uses: actions/upload-artifact@v4
         with:
@@ -32,3 +38,4 @@ jobs:
           path: |
             esp.img
             listing.txt
+            out/polaris-esp/esp.json
