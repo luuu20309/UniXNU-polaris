@@ -18,7 +18,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          KRUN=$(gh run list -R "$GITHUB_REPOSITORY" -w kernel.yml --status completed --limit 1 --json databaseId --jq '.[0].databaseID' 2>/dev/null || gh run list -R "$GITHUB_REPOSITORY" -w kernel.yml --status completed --limit 1 --json databaseId --jq '.[0].databaseId')
+          KRUN=$(gh run list -R "$GITHUB_REPOSITORY" -w kernel.yml --status completed --limit 1 --json databaseId --jq '.[0].databaseId')
           test -n "$KRUN"
           gh run download -R "$GITHUB_REPOSITORY" "$KRUN" -n platform-kernel-results -D out/kernel
           test -f out/kernel/kernel.macho && test -f out/kernel/kernel.json
