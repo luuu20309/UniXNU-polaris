@@ -140,3 +140,89 @@ No Apple images, device dumps, serials or Qualcomm blobs in this repository.
 Temporary boots and any partition writes need explicit prior approval;
 preserve bootloader, recovery, modem, persist and backups. Compilation
 success is never presented as hardware execution.
+
+## Hardware bring-up day 2 (2026-10-24 afternoon): the kernel runs to its designed end
+
+User-approved session; every boot was a temporary `fastboot boot`, the only
+writes being the ESP re-flash into userdata. The full timeline, evidence kept
+as user-photographed screen states:
+
+### The silent stop and the probe ladder
+
+The heartbeat ESP from the morning reached the green entry bar but painted no
+walking line and no panic text: a silent early stop. With no serial, no storage
+and no framebuffer mapping until late boot, the only signal channel is the
+screen, so the sheng entry-probe tool (`scripts/patch-xnu-entry-probe.py`,
+adapted: cave relocation into verified zero windows, vendored font, `--probe-extra`
+plumbing) was wired into `make-payload-esp.py`, and the death point was
+bisected by stage-4 reset probes (reach the call → 8 s later PSCI reset =
+phone reboots on its own; never reach = screen stays frozen):
+
+| Q | Probe (reset after call) | Result |
+| --- | --- | --- |
+| 1 | `_PE_init_platform` #1 (arm_init) | reached (reboot) |
+| 2 | `_arm_vm_init` | reached |
+| 3 | `_kprintf` #1 | reached |
+| 4 | `_bsd_init` (old kernel) | frozen — invalidated later by bug 1 |
+| 5 | `_kernel_startup_initialize_upto` #1 (old kernel) | frozen — same |
+| 6 | `_machine_startup` | frozen |
+| 7 | `_PE_init_platform` #2 | frozen |
+| 8 | `_PE_create_console` | frozen → death inside this function |
+| 9 | disassembly of `_PE_create_console` (ci `disasm.yml`) | see bug 1 |
+
+### Bug 1: the BCM2837 fixed panic-log address bus-errors on SDM845
+
+The disassembly showed `PE_create_console` → `ml_io_map_wcomb(0x3c0fc000,
+0x4000)` → an immediate load: the BCM2837 machine configuration (which UniXNU
+uses for the 4 KiB page layout) compiles in the Raspberry-Pi SoC panic-log
+address, and `check_for_panic_log` maps and reads it unconditionally. QEMU
+tolerates the read (returns 0, magic mismatch, skip) — so every CI check was
+green — but on SDM845 0x3c0fc000 is unmapped bus-error territory: synchronous
+exception, silent stop. Fix: `CONFIG_XNU_DT_PANIC_REGION=y` routes the probe
+through the device tree (UniXNU's own `native-dt-panic-region` patch), and the
+polaris ADT has no panic-region node, so the probe exits safely. **This bug
+and fix apply to every UniXNU non-RPi hardware port.**
+
+### Bug 2: the entry probes invalidated the FIPS POST integrity HMAC
+
+After bug 1 the kernel advanced and the panic screen drew its first real
+message: `FIPS Kernel POST Failed (-2074) @corecrypto_kext.c:342`. Decoding
+`result = test_counter * 1000 + rc`: the second POST test
+(`fipspost_post_integrity`) failed with -74 — the HMAC-SHA256 over `__text`
+did not match the value sealed into `__fips_hmacs` by the base build's
+`seal-source-crypto-kernel.py`. Cause: our entry-probe patch rewrites `__text`
+(caves + branch sites) **after** the seal. Fix: `make-payload-esp.py` now
+re-runs the seal over the patched ESP copy (`scripts/seal-source-crypto-kernel.py`,
+vendored) — no selftest is skipped or weakened; the integrity POST now
+measures the image that actually runs. QEMU passed throughout because its
+native check consumes the unpatched kernel.
+
+### End state: the designed finish line
+
+With both fixes the kernel ran through the entire startup: arm_init (kprintf,
+console), the scheduler and thread world, the STARTUP chain including the
+corecrypto FIPS POST, bsd_init and IOKit, and stopped at the designed
+platform-stage boundary with a photographed panic:
+
+```
+Failed to mount root device @IOKitBSDInit.cpp:984
+pages=0x3dcfc free=0x3d4bd
+```
+
+This platform kernel has no root by design (no storage driver, no ramdisk
+root, same as the UniXNU QEMU platform check). Reaching that panic is itself
+the proof set: bsd_init cannot run without working timer interrupts and the
+scheduler, so the real-phone GIC/PPI-19 timer path and preemption are
+established by execution, not by claim. The heartbeat pixel did not paint
+(a framebuffer-mapping detail inside ArmCpu::start, cosmetic at this stage);
+the scheduler evidence above supersedes it.
+
+### Tooling added during the session
+
+- `scripts/patch-xnu-entry-probe.py` + `xnu-panic-screen.c` + `Font.h`
+  (vendored from the sheng device repository, BSD-2-Clause-Patent) with cave
+  relocation for this kernel's link layout.
+- `make-payload-esp.py`: `--probe-extra` plumbing and the automatic re-seal.
+- `.github/workflows/disasm.yml`: on-demand kernel disassembly for probes.
+- `board.toml`: `serial=0` (no debug UART on this phone; the old `serial=3`
+  placeholder was never the death cause but is corrected anyway).
