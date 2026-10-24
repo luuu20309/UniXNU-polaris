@@ -381,15 +381,21 @@ bool ArmCpu::start (IOService *provider)
 {
   const boot_args *args = reinterpret_cast<const boot_args *>(const_boot_args);
   if (!gPulseBase && args->Video.v_baseAddr != 0 && args->Video.v_depth == 32) {
-    const uint32_t pulseBytes = static_cast<uint32_t>(args->Video.v_rowBytes) * 4;   // rows 0..3
+    // The bottom rows: the loader's entry-probe bands already own the top of
+    // the panel, so a heartbeat there is invisible. Map the last 8 rows and
+    // paint on the 4th of them.
+    const uint32_t rowBytes = static_cast<uint32_t>(args->Video.v_rowBytes);
+    const uint32_t width = static_cast<uint32_t>(args->Video.v_width) & ~3u;
+    const uint32_t height = static_cast<uint32_t>(args->Video.v_height);
     OSSharedPtr<IOMemoryDescriptor> pulseMemory (IOMemoryDescriptor::withPhysicalAddress (
-        static_cast<mach_vm_address_t>(args->Video.v_baseAddr), pulseBytes, kIODirectionInOut), OSNoRetain);
+        static_cast<mach_vm_address_t>(args->Video.v_baseAddr) + static_cast<mach_vm_address_t>(rowBytes) * (height - 8),
+        rowBytes * 8, kIODirectionInOut), OSNoRetain);
     OSSharedPtr<IOMemoryMap> pulseMap (pulseMemory
         ? pulseMemory->map (kIOMapAnywhere | kIOMapInhibitCache) : nullptr, OSNoRetain);
     if (pulseMap) {
       gPulseBase = reinterpret_cast<volatile uint32_t *>(pulseMap->getVirtualAddress ());
-      gPulseStridePixels = static_cast<uint32_t>(args->Video.v_rowBytes) / 4;
-      gPulseWidth = static_cast<uint32_t>(args->Video.v_width) & ~3u;
+      gPulseStridePixels = rowBytes / 4;
+      gPulseWidth = width;
       gPulseMap = pulseMap;   // keeps the mapping alive for the IRQ-context writes
     }
   }
@@ -603,7 +609,7 @@ void ArmCpu::interrupt (void)
     if ((id & 0xffffff) == gVirtualTimerIntid) {
       armcpu_timer_interrupts = armcpu_timer_interrupts + 1;
       if (gPulseBase != nullptr && (armcpu_timer_interrupts & 63) == 0) {
-        volatile uint32_t *row = gPulseBase + gPulseStridePixels * 2;   // row 2, below the entry-probe bar
+        volatile uint32_t *row = gPulseBase + gPulseStridePixels * 4;   // fourth row from the panel bottom
         const uint32_t green = 0xFF00FF00u;
         row[gPulseX] = green; row[gPulseX + 1] = green;
         row[gPulseX + 2] = green; row[gPulseX + 3] = green;
