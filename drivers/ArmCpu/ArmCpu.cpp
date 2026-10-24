@@ -379,9 +379,9 @@ void ArmCpu::enableGic (void)
 bool ArmCpu::start (IOService *provider)
 {
   const boot_args *args = reinterpret_cast<const boot_args *>(const_boot_args);
-  if (!gPulseBase && args->Video.v_base != 0 && args->Video.v_depth == 32) {
+  if (!gPulseBase && args->Video.v_baseAddr != 0 && args->Video.v_depth == 32) {
     gPulseBase = reinterpret_cast<volatile uint32_t *>(
-        ml_io_map(args->Video.v_base, args->Video.v_rowBytes * 4));
+        ml_io_map(static_cast<vm_offset_t>(args->Video.v_baseAddr), args->Video.v_rowBytes * 4));
     gPulseStridePixels = args->Video.v_rowBytes / 4;
     gPulseWidth = args->Video.v_width;
   }
@@ -596,7 +596,9 @@ void ArmCpu::interrupt (void)
       armcpu_timer_interrupts = armcpu_timer_interrupts + 1;
       if (gPulseBase != nullptr && (armcpu_timer_interrupts & 63) == 0) {
         volatile uint32_t *row = gPulseBase + gPulseStridePixels * 2;   // row 2, below the entry-probe bar
-        row[gPulseX] = row[gPulseX + 1] = row[gPulseX + 2] = row[gPulseX + 3] = 0xFF00FF00u;
+        const uint32_t green = 0xFF00FF00u;
+        row[gPulseX] = green; row[gPulseX + 1] = green;
+        row[gPulseX + 2] = green; row[gPulseX + 3] = green;
         gPulseX += 4;
         if (gPulseX + 4 > gPulseWidth) gPulseX = 0;   // sweep full: start over
       }
