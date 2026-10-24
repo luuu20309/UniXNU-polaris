@@ -381,16 +381,16 @@ bool ArmCpu::start (IOService *provider)
 {
   const boot_args *args = reinterpret_cast<const boot_args *>(const_boot_args);
   if (!gPulseBase && args->Video.v_baseAddr != 0 && args->Video.v_depth == 32) {
-    const uint32_t pulseBytes = args->Video.v_rowBytes * 4;   // rows 0..3, below the entry-probe bar
+    const uint32_t pulseBytes = static_cast<uint32_t>(args->Video.v_rowBytes) * 4;   // rows 0..3
     OSSharedPtr<IOMemoryDescriptor> pulseMemory (IOMemoryDescriptor::withPhysicalAddress (
         static_cast<mach_vm_address_t>(args->Video.v_baseAddr), pulseBytes, kIODirectionInOut), OSNoRetain);
     OSSharedPtr<IOMemoryMap> pulseMap (pulseMemory
         ? pulseMemory->map (kIOMapAnywhere | kIOMapInhibitCache) : nullptr, OSNoRetain);
     if (pulseMap) {
-      gPulseBase = static_cast<volatile uint32_t *>(pulseMap->getVirtualAddress ());
-      gPulseStridePixels = args->Video.v_rowBytes / 4;
-      gPulseWidth = args->Video.v_width & ~3u;
-      gPulseMap = std::move (pulseMap);   // keep the mapping alive for the IRQ-context writes
+      gPulseBase = reinterpret_cast<volatile uint32_t *>(pulseMap->getVirtualAddress ());
+      gPulseStridePixels = static_cast<uint32_t>(args->Video.v_rowBytes) / 4;
+      gPulseWidth = static_cast<uint32_t>(args->Video.v_width) & ~3u;
+      gPulseMap = pulseMap;   // keeps the mapping alive for the IRQ-context writes
     }
   }
   unsigned skip = 0;
