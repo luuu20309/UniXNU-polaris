@@ -34,6 +34,12 @@ volatile uint32_t armcpu_core_timer[8], armcpu_core_sgi[8];   // per logical cor
 static bool gSpiIpi = false;                // boot-arg armcpu-spi-ipi=1: IPIs are software-pended SPIs 1008+core routed to that core (ICC_SGI1R_EL1 generates nothing on this board)
 static bool gSelfIpi = false;               // boot-arg armcpu-self-ipi=1: every core sends itself SGI 0 from initCPU
 volatile uint32_t armcpu_irq_phase = 0,armcpu_irq_id = 1023;
+// Timer heartbeat: every 64 architectural-timer IRQs paint four green pixels on
+// the framebuffer the loader handed over in boot_args. A walking green line on
+// the panel means the kernel is alive AND real timer interrupts (this board's
+// PPI 19) are delivered through the GIC. Silent without handed-over video.
+static volatile uint32_t *gPulseBase = nullptr;
+static uint32_t gPulseStridePixels = 0, gPulseWidth = 0, gPulseX = 0;
 volatile uint32_t armcpu_quiesce_calls = 0,armcpu_halt_calls = 0;
 // Secondary-CPU bring-up evidence (sheng-smp=1). Step values: 1 nub started, 2 registered, 3 start thread running,
 // 4 PSCI CPU_ON issued, 5 entered initCPU on the new core, 6 GIC redistributor ready, 7 running.
@@ -372,6 +378,13 @@ void ArmCpu::enableGic (void)
 
 bool ArmCpu::start (IOService *provider)
 {
+  const boot_args *args = reinterpret_cast<const boot_args *>(const_boot_args);
+  if (!gPulseBase && args->Video.v_base != 0 && args->Video.v_depth == 32) {
+    gPulseBase = reinterpret_cast<volatile uint32_t *>(
+        ml_io_map(args->Video.v_base, args->Video.v_rowBytes * 4));
+    gPulseStridePixels = args->Video.v_rowBytes / 4;
+    gPulseWidth = args->Video.v_width;
+  }
   unsigned skip = 0;
   PE_parse_boot_argn ("armcpu-skip-gic", &skip, sizeof (skip));
   skipGic = skip != 0;
@@ -581,6 +594,12 @@ void ArmCpu::interrupt (void)
     if(diagnosePower && ++drained>128)panic("ArmCpu: IRQ drain exceeds 128 id=%llx timer=%llu IPI=%llu",id,armcpu_timer_interrupts,armcpu_ipi_interrupts);
     if ((id & 0xffffff) == gVirtualTimerIntid) {
       armcpu_timer_interrupts = armcpu_timer_interrupts + 1;
+      if (gPulseBase != nullptr && (armcpu_timer_interrupts & 63) == 0) {
+        volatile uint32_t *row = gPulseBase + gPulseStridePixels * 2;   // row 2, below the entry-probe bar
+        row[gPulseX] = row[gPulseX + 1] = row[gPulseX + 2] = row[gPulseX + 3] = 0xFF00FF00u;
+        gPulseX += 4;
+        if (gPulseX + 4 > gPulseWidth) gPulseX = 0;   // sweep full: start over
+      }
       armcpu_core_timer[logicalId & 7] = armcpu_core_timer[logicalId & 7] + 1;
       armcpu_irq_phase=2;
       rtclock_intr (0);
