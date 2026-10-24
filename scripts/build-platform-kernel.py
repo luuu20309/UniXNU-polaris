@@ -80,7 +80,8 @@ def main():
     script = ctx.tree / 'scripts/build-xnu-4k-baseline.sh'
     obj = ctx.tree / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837'
     bootstrap = dict(env, XNU_SOURCE_CORECRYPTO14='0', XNU_SOURCE_PTHREAD='0',
-                     XNU_ARM_DT_PLATFORM='0', XNU_ARMCPU='0', XNU_NATIVE_ARCH_TIMER='0', XNU_BOOT_PROGRESS='0')
+                     XNU_ARM_DT_PLATFORM='0', XNU_ARMCPU='0', XNU_NATIVE_ARCH_TIMER='0',
+                     XNU_SOURCE_MOCKFS='0', XNU_BOOT_PROGRESS='0')
     print('Bootstrap pass: compiling XNU records before external archives', flush=True)
     bootstrap_failed = False
     try:
