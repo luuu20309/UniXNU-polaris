@@ -42,3 +42,42 @@ hardware_tested = false
 # lock screen with touch. That evidence does not transfer to this Darwin 23
 # tree: no firmware path, prelink target, userdata geometry or Apple identity
 # has been qualified for this port, and the upstream full build is incomplete.
+
+# The target OS image for the userland stage: the same iPad7,1 iPadOS 17.7.11
+# restore image sheng is qualified against (the ABI the 4K source kernel
+# prelinks to). iPhone X has no iOS 17, so the new chain carries an iPad
+# identity, unlike the retired ABL chain.
+[ipsw]
+url = "https://updates.cdn-apple.com/2025SpringFCS/fullrestores/122-77166/DCA6CFE8-90E9-4B92-880D-3DE171798E40/iPad_Pro_HFR_17.7.11_21H461_Restore.ipsw"
+product = "iPad7,1"
+version = "17.7.11"
+build = "21H461"
+device_class = "j120ap"
+chip_id = 0x8011
+board_id = 12
+fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemTrustCache"]
+
+[ipsw.sha256]
+"044-76040-038.dmg" = "3f99b859c9728379110b66657c7b15285bcb1925ad8b5726542e2cdcf8b1028d"
+"044-76034-038.dmg" = "b4908cde41d23e6bc05e6af51a2c9eeb00cf0f863a6a18b1600c96a3fd70414f"
+
+# First userland milestone: prelink the source kernel against the iPadOS 17
+# kernelcache. The roots below are a deliberately small starting set (platform,
+# crypto, AMFI, sandbox, APFS, storage/HID plumbing); expect iteration.
+[kernel.prelink]
+tool = "kits/NativePrelink/emit_prelink.py"
+kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.unstripped.noctf"
+slide = "-0x1000000"
+early_security_init = "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0"
+roots = [
+  "com.apple.kec.corecrypto",
+  "com.apple.driver.AppleARMPlatform",
+  "com.apple.filesystems.apfs",
+  "com.apple.driver.AppleMobileFileIntegrity",
+  "com.apple.security.sandbox",
+  "com.apple.kext.CoreTrust",
+  "com.apple.security.AppleImage4",
+  "com.apple.iokit.IOStorageFamily",
+  "com.apple.iokit.IOSurface",
+  "com.apple.iokit.IOHIDFamily",
+]

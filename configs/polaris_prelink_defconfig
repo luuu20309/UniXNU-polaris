@@ -1,0 +1,20 @@
+# First prelinked milestone: the platform kernel plus the original iPadOS 17
+# kernelcache components (corecrypto from the cache, trust-cache runtime,
+# mockfs for a ramdisk root). Storage/owner chains stay off until the QEMU
+# userland path is proven; the plain polaris_defconfig remains the
+# hardware-verified platform configuration.
+CONFIG_XNU_BUILD_ARCHIVES=y
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_SOURCE_PTHREAD=y
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_NATIVE_ARCH_TIMER=y
+CONFIG_XNU_NATIVE_PAN=y
+CONFIG_XNU_TRUST_CACHE_RUNTIME=y
+CONFIG_XNU_SOURCE_MOCKFS=y
+CONFIG_XNU_DT_PANIC_REGION=y
+CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
+CONFIG_XNU_NATIVE_UFS=n
+CONFIG_XNU_NATIVE_ADRENO=n
+CONFIG_XNU_NATIVE_LEGACY_DISPLAY=n
+CONFIG_XNU_ARMVIRT_PLATFORM=n
