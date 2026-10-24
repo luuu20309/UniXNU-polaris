@@ -105,6 +105,12 @@ def main():
         probe = ROOT / 'scripts/patch-xnu-entry-probe.py'
         sp.run([sys.executable, str(probe), out / 'EFI/UniXNU/Payloads/kernel.macho',
                 '--panic-screen', *shlex.split(args.probe_extra or '--no-reset')], check=True)
+        # The probes rewrite __text, which invalidates the sealed FIPS POST
+        # integrity HMAC the base build wrote into __fips_hmacs. Re-run the
+        # seal over the patched copy so corecrypto's integrity POST sees the
+        # image it is actually measuring (no selftest is skipped or weakened).
+        sp.run([sys.executable, str(ROOT / 'scripts/seal-source-crypto-kernel.py'),
+                out / 'EFI/UniXNU/Payloads/kernel.macho'], check=True)
     (out / 'EFI/UniXNU/Payloads/kernel.macho.adt').write_bytes(adt)
     (out / 'EFI/UniXNU/unixnu.toml').write_text(
         'version = 1\n'
