@@ -16,6 +16,7 @@ archives = [
   "build-arm-driver.py ArmDTPlatform",
   "build-arm-driver.py ArmCpu",
   "build-libpthread-kernel.py",
+  "build-mockfs-fixture.py",
 ]
 
 [payload]
