@@ -1,6 +1,11 @@
 name: ESP FAT image
 on:
   workflow_dispatch:
+    inputs:
+      probe_extra:
+        description: 'Extra patch-xnu-entry-probe args (default --no-reset), e.g. --reset-after _PE_init_platform --in _arm_init --reset-delay 8'
+        default: ''
+        type: string
 permissions:
   contents: read
 jobs:
@@ -24,7 +29,7 @@ jobs:
       - name: Assemble the probe ESP
         run: |
           sudo apt-get update && sudo apt-get install -y mtools clang llvm lld
-          python3 scripts/make-payload-esp.py --kernel out/kernel/kernel.macho --efi out/efi --out out/polaris-esp --cpus 1
+          python3 scripts/make-payload-esp.py --kernel out/kernel/kernel.macho --efi out/efi --out out/polaris-esp --cpus 1 --probe-extra "${{ inputs.probe_extra }}"
       - name: Build the FAT32 image
         run: |
           truncate -s 128M esp.img

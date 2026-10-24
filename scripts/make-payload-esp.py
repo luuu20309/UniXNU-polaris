@@ -46,6 +46,8 @@ def main():
     parser.add_argument('--owned-memory-size', type=lambda v: int(v, 0), default=0x40000000)
     parser.add_argument('--no-probe', action='store_true',
                         help='skip the boot-progress/panic probes on the ESP kernel copy')
+    parser.add_argument('--probe-extra', default='',
+                        help='extra patch-xnu-entry-probe arguments (default: --no-reset); e.g. --reset-after _PE_init_platform --in _arm_init --reset-delay 8')
     args = parser.parse_args()
     if not 1 <= args.cpus <= 8:
         parser.error('--cpus must be 1..8')
@@ -98,10 +100,11 @@ def main():
     # funnel. With no serial console on this phone these are the only early-boot
     # signals; the timer heartbeat covers the IOKit stage.
     if not args.no_probe:
+        import shlex
         import subprocess as sp
         probe = ROOT / 'scripts/patch-xnu-entry-probe.py'
         sp.run([sys.executable, str(probe), out / 'EFI/UniXNU/Payloads/kernel.macho',
-                '--panic-screen', '--no-reset'], check=True)
+                '--panic-screen', *shlex.split(args.probe_extra or '--no-reset')], check=True)
     (out / 'EFI/UniXNU/Payloads/kernel.macho.adt').write_bytes(adt)
     (out / 'EFI/UniXNU/unixnu.toml').write_text(
         'version = 1\n'
