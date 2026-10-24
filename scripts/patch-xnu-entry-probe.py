@@ -395,7 +395,7 @@ def main():
         # This kernel's padding does not sit at the recorded offsets (different
         # link layout). Relocate every cave into verified zero windows in the
         # entry segment instead of guessing at occupied padding.
-        base = find_zero_window(data, AFTER_MMU_VA + 0x400, 4 * CAVE_SIZE, AFTER_MMU_VA + 0x200000)
+        base = find_zero_window(data, AFTER_MMU_VA + 0x400, 4 * CAVE_SIZE, 0xFFFFFFF00E000000)   # within B/BL range of the entry
         CAVES.update({stage: base + index * CAVE_SIZE for index, stage in enumerate((1, 2, 3, 4))})
         PANIC_CAVE_END = base + 4 * CAVE_SIZE + 0x1000
         find_zero_window(data, base + 4 * CAVE_SIZE, 0x1000, PANIC_CAVE_END + 1)  # verify
