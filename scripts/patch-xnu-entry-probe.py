@@ -251,6 +251,24 @@ ROOT = Path(__file__).resolve().parents[1]
 SEGMENTS = []   # (vmaddr, vmsize, fileoff, filesize) of the kernel being patched
 
 
+def find_zero_window(data, start_va, size, limit_va):
+    """First >=size fully-zero window in the segment that carries the entry.
+
+    Used when the fixed per-build cave offsets do not line up with this
+    kernel's padding; the emptiness test is the same one the fixed path uses,
+    so a non-zero byte is never overwritten."""
+    seg = min((s for s in SEGMENTS if s[0] <= start_va < s[0] + s[1]),
+              default=None)
+    if seg is None:
+        raise SystemExit(f'{start_va:#x} is outside a loaded segment')
+    va = (start_va + 0xF) & ~0xF
+    while va + size <= min(limit_va, seg[0] + seg[1]):
+        if not any(data[file_offset(va):file_offset(va) + size]):
+            return va
+        va += 0x10
+    raise SystemExit(f'no zero window of {size:#x} bytes below {limit_va:#x}; refuse to guess')
+
+
 def load_segments(data):
     """Read the Mach-O segment table; the file layout differs between kernel builds."""
     magic, _, _, _, ncmds = struct.unpack_from('<IiiII', data, 0)
@@ -373,9 +391,15 @@ def main():
     for va, value in expected.items():
         if word(va) != value:
             raise SystemExit(f'{va:#x} holds {word(va):#010x}, expected {value:#010x}: not the kernel these probes are for')
-    for va in CAVES.values():
-        if any(data[file_offset(va):file_offset(va) + CAVE_SIZE]):
-            raise SystemExit(f'Padding at {va:#x} is not empty')
+    global PANIC_CAVE_END
+    if any(any(data[file_offset(va):file_offset(va) + CAVE_SIZE]) for va in CAVES.values()):
+        # This kernel's padding does not sit at the recorded offsets (different
+        # link layout). Relocate every cave into verified zero windows in the
+        # entry segment instead of guessing at occupied padding.
+        base = find_zero_window(data, AFTER_MMU_VA + 0x400, 4 * CAVE_SIZE)
+        CAVES.update({stage: base + index * CAVE_SIZE for index, stage in enumerate((1, 2, 3, 4))})
+        PANIC_CAVE_END = base + 4 * CAVE_SIZE + 0x1000
+        find_zero_window(data, base + 4 * CAVE_SIZE, 0x1000, PANIC_CAVE_END + 1)  # verify
 
     # (site, cave stage, symbols the cave is linked with)
     sites = [(ENTRY_VA, 1, {'target': START_FIRST_CPU}),
@@ -403,7 +427,7 @@ def main():
     if args.panic_screen:
         # Right after the last probe cave in use, so the padding is shared as tightly as possible.
         PANIC_CAVE = max(CAVES[stage] for _, stage, _ in sites) + CAVE_SIZE
-        if word(PANIC_VA) in (0, 0xFFFFFFFF) or any(data[file_offset(PANIC_CAVE):file_offset(PANIC_CAVE_END)]):
+        if word(PANIC_VA) in (0, 0xFFFFFFFF) or any(data[file_offset(PANIC_CAVE):file_offset(min(PANIC_CAVE + 0x1000, PANIC_CAVE_END))]):
             raise SystemExit('panic() or the panic screen padding is not as expected')
         with tempfile.TemporaryDirectory() as tmp:
             code, load, entry = assemble_c(ROOT / 'scripts/xnu-panic-screen.c', PANIC_CAVE, Path(tmp), kernel_names)
