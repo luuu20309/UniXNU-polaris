@@ -1,0 +1,34 @@
+name: ESP FAT image
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the latest kernel ESP artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN=$(gh run list -R "$GITHUB_REPOSITORY" -w kernel.yml --status success --limit 1 --json databaseId --jq '.[0].databaseId')
+          test -n "$RUN"
+          gh run download -R "$GITHUB_REPOSITORY" "$RUN" -n platform-check-results -D out/dl
+          test -f out/dl/polaris-esp/EFI/UniXNU/Payloads/kernel.macho
+      - name: Build the FAT32 image with mtools
+        run: |
+          sudo apt-get update && sudo apt-get install -y mtools
+          truncate -s 128M esp.img
+          mformat -i esp.img -v POLARISESP ::
+          mcopy -s -i esp.img out/dl/polaris-esp/EFI ::/
+          mdir -i esp.img ::/EFI/UniXNU/Payloads/ > listing.txt
+          mdir -i esp.img ::/EFI/BOOT/ >> listing.txt
+          cat listing.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: polaris-esp-image
+          path: |
+            esp.img
+            listing.txt
