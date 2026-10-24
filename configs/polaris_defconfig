@@ -12,3 +12,8 @@ CONFIG_XNU_CRYPTO_BOOTSTRAP="source"
 # CONFIG_XNU_NATIVE_UFS is not set
 # CONFIG_XNU_NATIVE_ADRENO is not set
 # CONFIG_XNU_NATIVE_LEGACY_DISPLAY is not set
+
+# Route the boot panic-log probe through the device tree: the BCM2837 machine
+# constant (0x3c0fc000) is unmapped bus-error territory on SDM845 and killed
+# PE_create_console on the phone (QEMU tolerates the read, hardware does not).
+CONFIG_XNU_DT_PANIC_REGION=y
