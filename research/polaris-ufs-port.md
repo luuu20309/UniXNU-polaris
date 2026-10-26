@@ -50,12 +50,13 @@ performs a phone write.
 
 ## Remaining gates
 
-1. Two macOS/Xcode build issues have been found and patched on the experiment
-   branch. Run `40337260112` exposed an unsupported global Clang warning flag;
-   run `40338619715` then exposed that pinned UniXNU revision
-   `37987aea...` omits `IOStorageFamily` from its kernel fetch list. The build
-   now explicitly fetches that pinned header feed when NativeUfs is enabled.
-   Rerun and address any further compiler/linker diagnostics.
+1. Three macOS/Xcode build issues have been found on the experiment branch.
+   Run `40337260112` exposed an unsupported global Clang warning flag; run
+   `40338619715` and `40340235465` showed the pinned UniXNU revision
+   `37987aea...` has neither an `IOStorageFamily` kernel reference nor a feed
+   definition. The project now defines that source at its pinned public
+   revision and fetches it when NativeUfs is enabled. Rerun and address any
+   further compiler/linker diagnostics.
 2. Read the phone's RAM size, choose the matching minimal ADT, and determine
    whether DarwinBoot/iPadOS need additional Apple tree properties before use.
 3. Build a distinct ESP entry with `native-ufs-root=1` using the new kernel and
