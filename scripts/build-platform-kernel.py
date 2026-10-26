@@ -54,7 +54,7 @@ def main():
     references = set(cli.REFERENCES['kernel'])
     # This checkout pins a UniXNU revision whose kernel reference list predates
     # IOStorageFamily. NativeUfs includes IOBlockStorageDevice.h from that feed.
-    if ctx.config.get('CONFIG_XNU_NATIVE_UFS', False):
+    if ctx.config.get('XNU_NATIVE_UFS', False):
         references.add('IOStorageFamily')
         # Force the verified source even if an older/local module resolution
         # left behind an empty refer directory or a stale local candidate.

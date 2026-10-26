@@ -55,9 +55,11 @@ performs a phone write.
    `40338619715` and `40340235465` showed the pinned UniXNU revision
    `37987aea...` has neither an `IOStorageFamily` kernel reference nor a feed
    definition. The project now defines that source at its pinned public
-   revision and now forcibly registers it with the pinned build API when
-   NativeUfs is enabled, replacing any stale local entry. Rerun and address
-   any further compiler/linker diagnostics.
+   revision. Runs `40342688000`–`40343863307` then showed the registration gate
+   was checking the wrong key: the pinned defconfig parser strips `CONFIG_`, so
+   the actual key is `XNU_NATIVE_UFS`. The gate now uses that parsed key and
+   forcibly registers the pinned source. Rerun and address any further
+   compiler/linker diagnostics.
 2. Read the phone's RAM size, choose the matching minimal ADT, and determine
    whether DarwinBoot/iPadOS need additional Apple tree properties before use.
 3. Build a distinct ESP entry with `native-ufs-root=1` using the new kernel and
