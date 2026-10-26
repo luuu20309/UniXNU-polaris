@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Build the Darwin 23 source-kernel platform milestone for polaris on macOS/Xcode.
+"""Build the Darwin 23 polaris kernel, including the configured prelink stage.
 
 Same two-pass scheme as the sweet platform milestone: the first pass creates
 real XNU compile records and the source symbol inventory (its link may fail);
 the selected source archives are then built, the bootstrap objects discarded,
-and the final configured link is required to succeed. No original kernelcache,
-IPSW, userdata image or phone is used. The output is a source-kernel bring-up
-artifact for polaris, not an iOS image.
+and the final configured link is required to succeed. No userdata image or
+phone is used. The optional prelink stage fetches the configured IPSW
+kernelcache and replaces the staged source kernel with its iPadOS composition
+before the artifact report is written.
 """
 import argparse
 import hashlib
@@ -137,14 +138,18 @@ def main():
         prelinked = kernel.prelink(ctx)
         print(f'PASS: prelinked kernel {prelinked} sha256 '
               f'{hashlib.sha256(prelinked.read_bytes()).hexdigest()}', flush=True)
-    report = {'kernel_sha256': hashlib.sha256(data).hexdigest(), 'kernel_bytes': len(data),
+    final_data = destination.read_bytes()
+    report = {'kernel_sha256': hashlib.sha256(final_data).hexdigest(),
+              'kernel_bytes': len(final_data),
+              'source_kernel_sha256': hashlib.sha256(data).hexdigest(),
               'unixnu_revision': revision, 'bootstrap_link_failed': bootstrap_failed,
               'final_configured_link_passed': True,
               'original_components_prelinked': prelinked is not None,
               'hardware_booted': False, 'userland_booted': False,
               'sources': {name: module.commit for (_, name), module in modules.items() if module.commit}}
     destination.with_suffix('.json').write_text(json.dumps(report, indent=2) + '\n')
-    print(f'PASS: source-kernel platform artifact {destination}; no physical boot claimed')
+    print(f'PASS: {"prelinked" if prelinked else "source"} kernel artifact '
+          f'{destination}; no physical boot claimed')
 
 
 if __name__ == '__main__':
