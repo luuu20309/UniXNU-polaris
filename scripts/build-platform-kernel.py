@@ -118,6 +118,11 @@ def main():
         run(['python3', ctx.tree / 'scripts/prepare-storage-headers.py'], cwd=ctx.tree, env=env,
             log_file=ctx.logs / 'storage-headers.log')
     kernel.build_archives(ctx, env)
+    if ctx.config.get('XNU_NATIVE_UFS', False):
+        run(['python3', ctx.tree / 'scripts/build-storage-base.py'], cwd=ctx.tree, env=env,
+            log_file=ctx.logs / 'storage-base.log')
+        storage_base = ctx.tree / 'build/storage-base/libIOBlockStorageDevice.a'
+        env['XNU_EXTRA_LD_ARCHIVES'] = f'-Wl,-force_load,{storage_base}'
     # Never reuse an object compiled with the bootstrap feature selection.
     # Keep the compile records and generated headers for the archive recipes.
     for path in obj.rglob('*'):

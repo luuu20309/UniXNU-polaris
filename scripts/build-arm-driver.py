@@ -81,6 +81,23 @@ def polaris_native_ufs_source(out):
     if text.count(before) != 1:
         raise SystemExit('NativeUfs source drift: SM8550 GCC probe block not found uniquely')
     source.write_text(text.replace(before, after))
+
+    # This phone keeps the UniXNU ESP in userdata and has a separate darwin
+    # partition for the iPadOS root image. Never make the root driver consume
+    # the ESP partition as its SHNGROOT store.
+    layout = source_dir / 'RootLayout.h'
+    layout_text = layout.read_text()
+    before = 'static const char wanted[] = "userdata";'
+    if layout_text.count(before) != 1:
+        raise SystemExit('NativeUfs source drift: root partition selector not found uniquely')
+    layout.write_text(layout_text.replace(before, 'static const char wanted[] = "darwin";'))
+
+    mmio = source_dir / 'GccUfs.h'
+    mmio_text = mmio.read_text()
+    before = '#define UFS_HC_SIZE                   0x3000ULL'
+    if mmio_text.count(before) != 1:
+        raise SystemExit('NativeUfs source drift: UFSHCI register window not found uniquely')
+    mmio.write_text(mmio_text.replace(before, '#define UFS_HC_SIZE                   0x2500ULL'))
     return source
 
 
