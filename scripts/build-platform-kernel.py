@@ -39,7 +39,7 @@ def main():
         parser.error('the base checkout does not match upstream.json')
     # These are the only common submodules this source-kernel milestone uses.
     subprocess.run(['git', '-C', base, 'submodule', 'update', '--init', '--depth', '1',
-                    'drivers/ArmDTPlatform', 'kits/NativePrelink'], check=True)
+                    'drivers/ArmDTPlatform', 'drivers/NativeUfs', 'kits/NativePrelink'], check=True)
     sys.path.insert(0, str(base / 'scripts'))
     from unixnu import cli, feeds, kernel, tree
     from unixnu.config import Context, parse_config
@@ -100,6 +100,10 @@ def main():
                       if 'error:' in line or 'No rule to make target' in line]
             print('\n'.join(errors[:20]), file=sys.stderr)
         raise SystemExit('Bootstrap did not produce required XNU records: ' + ', '.join(missing))
+    storage_headers = ctx.tree / 'build/storage-abi/include/IOKit/storage'
+    if (ctx.tree / 'refer/IOStorageFamily').is_dir() and not storage_headers.is_dir():
+        run(['python3', ctx.tree / 'scripts/prepare-storage-headers.py'], cwd=ctx.tree, env=env,
+            log_file=ctx.logs / 'storage-headers.log')
     kernel.build_archives(ctx, env)
     # Never reuse an object compiled with the bootstrap feature selection.
     # Keep the compile records and generated headers for the archive recipes.

@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       defconfig:
-        description: 'configs/ defconfig name (polaris_defconfig or polaris_prelink_defconfig)'
+        description: 'configs/ defconfig name (platform, prelink, or experimental iPadOS 17/UFS)'
         default: 'polaris_defconfig'
         type: string
 permissions:

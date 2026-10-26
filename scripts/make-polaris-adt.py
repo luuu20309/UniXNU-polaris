@@ -3,10 +3,10 @@
 
 Writes only the requested local output. No device access or Apple input is
 needed. This describes real polaris hardware without an Apple product
-identity: the old ABL-shim chain's iPhone X (D22AP) identity, framebuffer and
-UFS nodes belong to the retired XNU 8796 boot path and are deliberately not
-carried over. Measured board constants come from the upstream Xiaomi polaris
-device tree and the ios16_on_polaris_mix2s bring-up notes.
+identity. The old ABL-shim chain's iPhone X (D22AP) identity and framebuffer
+do not carry over; the UFS controller node now describes the SDM845 device
+used by the UniXNU native-root bring-up. Measured board constants come from
+the upstream Xiaomi polaris device tree and the ios16_on_polaris_mix2s notes.
 """
 import argparse
 from pathlib import Path
@@ -21,6 +21,9 @@ DRAM_BASE = 0x100000000
 DRAM_SIZE_6 = 0x7CC00000
 DRAM_SIZE_8 = 0xFCC00000
 ARMIO_BASE = 0x01000000
+# SDM845 UFSHCI address from the polaris ABL shim and the public SDM845 DT.
+UFS_HC_BASE = 0x01D84000
+UFS_HC_SIZE = 0x2500
 # SDM845 and SM7150 share the same GICv3 layout observed on both boards.
 GICD = 0x17A00000
 GICR = 0x17A60000
@@ -75,7 +78,8 @@ def empty_nvram_proxy():
             ('nvram-proxy-data', bytes(image))]
 
 
-def build(*, cpu_count=1, dram_size=DRAM_SIZE_6, owned_memory_size=0x40000000, seed=None):
+def build(*, cpu_count=1, dram_size=DRAM_SIZE_6, owned_memory_size=0x40000000,
+          seed=None, ipad_identity=False):
     if cpu_count not in range(1, 9):
         raise ValueError('cpu count must be 1..8')
     if dram_size not in (DRAM_SIZE_6, DRAM_SIZE_8):
@@ -97,11 +101,14 @@ def build(*, cpu_count=1, dram_size=DRAM_SIZE_6, owned_memory_size=0x40000000, s
             # Descriptive only; UniXNU platform drivers do not read these.
             ('clock-frequency', u32(GOLD_HZ if gold else SILVER_HZ)),
         ]))
-    return node('device-tree', [
-        ('model', b'polaris-platform-bringup\0'),
+    root_properties = [
+        ('model', b'iPad7,1\0' if ipad_identity else b'polaris-platform-bringup\0'),
         ('compatible', b'xiaomi,polaris\0qcom,sdm845\0'),
         ('#address-cells', u32(2)), ('#size-cells', u32(2)),
-    ], [
+    ]
+    if ipad_identity:
+        root_properties.insert(2, ('target-type', b'J120\0'))
+    return node('device-tree', root_properties, [
         node('chosen', [
             ('random-seed', seed),
             ('dram-base', u64(DRAM_BASE)), ('dram-size', u64(dram_size)),
@@ -124,6 +131,10 @@ def build(*, cpu_count=1, dram_size=DRAM_SIZE_6, owned_memory_size=0x40000000, s
             ('reg', u64(GICD - ARMIO_BASE, 0x10000, GICR - ARMIO_BASE, 0x100000)),
             ('redistributor-stride', u64(0x20000)),
             ('virtual-timer-intid', u32(TIMER_INTID)),
+        ]), node('ufs@d84000', [
+            ('compatible', b'qcom,sdm845-ufshc\0qcom,ufshc\0jedec,ufs-2.0\0'),
+            ('reg', u64(UFS_HC_BASE - ARMIO_BASE, UFS_HC_SIZE)),
+            ('interrupts', u32(265)),
         ])]),
     ])
 
@@ -137,18 +148,21 @@ def main():
     parser.add_argument('--cpu-regs', default='0',
                         help='Initial prefix of polaris affinities: 0,0x100,...,0x700')
     parser.add_argument('--psci-method', choices=['smc'], default='smc')
+    parser.add_argument('--ipad-identity', action='store_true',
+                        help='add the iPad7,1/J120 root identity used by the local iPadOS 17 image')
     args = parser.parse_args()
     try:
         regs = [int(value, 0) for value in args.cpu_regs.split(',')]
         if not regs or regs != [core << 8 for core in range(len(regs))]:
             raise ValueError('--cpu-regs must be the initial polaris affinity prefix')
         blob = build(cpu_count=len(regs), dram_size=DRAM_SIZE_6 if args.ram == 6 else DRAM_SIZE_8,
-                     owned_memory_size=args.owned_memory_size)
+                     owned_memory_size=args.owned_memory_size, ipad_identity=args.ipad_identity)
     except ValueError as error:
         parser.error(str(error))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(blob)
-    print(f'{args.output}: {len(blob)} bytes; platform-stage ADT, not hardware validated')
+    identity = 'iPad7,1/J120 + ' if args.ipad_identity else ''
+    print(f'{args.output}: {len(blob)} bytes; {identity}Polaris ADT with passive UFS node; not hardware validated')
 
 
 if __name__ == '__main__':
