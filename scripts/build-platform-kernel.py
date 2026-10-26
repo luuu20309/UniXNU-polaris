@@ -52,6 +52,10 @@ def main():
     shutil.copyfile(config, ctx.config_path)
     modules = feeds.resolve(ctx)
     references = set(cli.REFERENCES['kernel'])
+    # This checkout pins a UniXNU revision whose kernel reference list predates
+    # IOStorageFamily. NativeUfs includes IOBlockStorageDevice.h from that feed.
+    if ctx.config.get('CONFIG_XNU_NATIVE_UFS', False):
+        references.add('IOStorageFamily')
     feeds.fetch(ctx, modules, only=references)
     tree.assemble(ctx, modules)
     # UniXNU resolves patch sets as whole directories. Materialize the pinned
