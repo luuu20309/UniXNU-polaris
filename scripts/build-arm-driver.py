@@ -53,6 +53,25 @@ def polaris_native_ufs_source(out):
         raise SystemExit('NativeUfs source drift: root error status expression not found uniquely')
     text = text.replace(before, after)
 
+    # The pinned driver only declares the read timing counter when verified
+    # blocks are enabled, but records timing unconditionally in its read path.
+    # The Polaris root experiment does not enable that optional policy.
+    before = ('      uint64_t t0 = timerTicks ();\n'
+              '      IOReturn r = hostRead4k (0, lba, blocks, out);\n'
+              '      __atomic_fetch_add (&native_ufs_read_ticks, timerTicks () - t0, __ATOMIC_RELAXED);\n'
+              '      return r;')
+    after = ('#if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK\n'
+             '      uint64_t t0 = timerTicks ();\n'
+             '#endif\n'
+             '      IOReturn r = hostRead4k (0, lba, blocks, out);\n'
+             '#if defined(NATIVE_VERIFIED_BLOCK) && NATIVE_VERIFIED_BLOCK\n'
+             '      __atomic_fetch_add (&native_ufs_read_ticks, timerTicks () - t0, __ATOMIC_RELAXED);\n'
+             '#endif\n'
+             '      return r;')
+    if text.count(before) != 1:
+        raise SystemExit('NativeUfs source drift: optional read timing block not found uniquely')
+    text = text.replace(before, after)
+
     # This diagnostic reads SM8550-only GCC clock registers. Polaris root mode
     # uses the firmware-initialized UFS host and the SDM845 SMMU stream instead.
     before = '  if (probe == 2) {\n    inspect ();\n  }'

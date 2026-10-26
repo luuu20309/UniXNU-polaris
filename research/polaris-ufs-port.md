@@ -62,7 +62,9 @@ performs a phone write.
    storage source and headers are now fetched; NativeUfs compilation reached
    an existing signed-to-unsigned status assignment under `-Werror`. The
    overlay now makes that conversion explicit. Rerun and address any further
-   compiler/linker diagnostics.
+   compiler/linker diagnostics. Run `40348020579` then exposed an upstream
+   optional verified-block timing counter used outside its feature guard; the
+   Polaris overlay now guards the read timing path with the same condition.
 2. Read the phone's RAM size, choose the matching minimal ADT, and determine
    whether DarwinBoot/iPadOS need additional Apple tree properties before use.
 3. Build a distinct ESP entry with `native-ufs-root=1` using the new kernel and
