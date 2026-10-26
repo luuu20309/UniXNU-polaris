@@ -55,8 +55,8 @@ performs a phone write.
    `40338619715` and `40340235465` showed the pinned UniXNU revision
    `37987aea...` has neither an `IOStorageFamily` kernel reference nor a feed
    definition. The project now defines that source at its pinned public
-   revision and fetches it when NativeUfs is enabled. Rerun and address any
-   further compiler/linker diagnostics.
+   revision and directly registers it with the pinned build API when NativeUfs
+   is enabled. Rerun and address any further compiler/linker diagnostics.
 2. Read the phone's RAM size, choose the matching minimal ADT, and determine
    whether DarwinBoot/iPadOS need additional Apple tree properties before use.
 3. Build a distinct ESP entry with `native-ufs-root=1` using the new kernel and

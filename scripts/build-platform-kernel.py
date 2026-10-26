@@ -56,6 +56,13 @@ def main():
     # IOStorageFamily. NativeUfs includes IOBlockStorageDevice.h from that feed.
     if ctx.config.get('CONFIG_XNU_NATIVE_UFS', False):
         references.add('IOStorageFamily')
+        if ('refer', 'IOStorageFamily') not in modules:
+            modules[('refer', 'IOStorageFamily')] = feeds.Module(
+                'refer', 'IOStorageFamily', None, 'git', {
+                    'git': 'https://github.com/apple-oss-distributions/IOStorageFamily.git',
+                    'ref': 'main',
+                    'commit': 'e45fbe30a7879e0b16e26dddb78538f1b00e0bff',
+                })
     feeds.fetch(ctx, modules, only=references)
     tree.assemble(ctx, modules)
     # UniXNU resolves patch sets as whole directories. Materialize the pinned
