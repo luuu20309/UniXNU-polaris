@@ -50,7 +50,7 @@ performs a phone write.
 
 ## Remaining gates
 
-1. Three macOS/Xcode build issues have been found on the experiment branch.
+1. Several macOS/Xcode build issues have been found on the experiment branch.
    Run `40337260112` exposed an unsupported global Clang warning flag; run
    `40338619715` and `40340235465` showed the pinned UniXNU revision
    `37987aea...` has neither an `IOStorageFamily` kernel reference nor a feed
@@ -58,7 +58,10 @@ performs a phone write.
    revision. Runs `40342688000`–`40343863307` then showed the registration gate
    was checking the wrong key: the pinned defconfig parser strips `CONFIG_`, so
    the actual key is `XNU_NATIVE_UFS`. The gate now uses that parsed key and
-   forcibly registers the pinned source. Rerun and address any further
+   forcibly registers the pinned source. Run `40345249877` confirmed the
+   storage source and headers are now fetched; NativeUfs compilation reached
+   an existing signed-to-unsigned status assignment under `-Werror`. The
+   overlay now makes that conversion explicit. Rerun and address any further
    compiler/linker diagnostics.
 2. Read the phone's RAM size, choose the matching minimal ADT, and determine
    whether DarwinBoot/iPadOS need additional Apple tree properties before use.

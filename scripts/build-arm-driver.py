@@ -44,6 +44,15 @@ def polaris_native_ufs_source(out):
             raise SystemExit(f'NativeUfs source drift: expected {expected} copies of {before!r}, found {count}')
         text = text.replace(before, after)
 
+    before = ('gRootDiagnostic.result = result.phase == UfsRootPhase::Identity ? kIOReturnNotPrivileged :\n'
+              '      result.phase == UfsRootPhase::Schedule ? kIOReturnNoResources : kIOReturnError;')
+    after = ('gRootDiagnostic.result = static_cast<uint32_t> (\n'
+             '      result.phase == UfsRootPhase::Identity ? kIOReturnNotPrivileged :\n'
+             '      result.phase == UfsRootPhase::Schedule ? kIOReturnNoResources : kIOReturnError);')
+    if text.count(before) != 1:
+        raise SystemExit('NativeUfs source drift: root error status expression not found uniquely')
+    text = text.replace(before, after)
+
     # This diagnostic reads SM8550-only GCC clock registers. Polaris root mode
     # uses the firmware-initialized UFS host and the SDM845 SMMU stream instead.
     before = '  if (probe == 2) {\n    inspect ();\n  }'
