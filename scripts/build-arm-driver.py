@@ -88,7 +88,7 @@ def main():
         index += 1
     command.extend(['-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
                     '-Wno-c99-designator', '-Wno-reorder-init-list',
-                    '-Wno-deprecated-enum-enum-conversion', '-Wno-unnecessary-virtual-specifier',
+                    '-Wno-deprecated-enum-enum-conversion',
                     '-I', str(ROOT / '.cache/xnu-work/osfmk')])
     if args.component == 'NativeUfs':
         command.extend(['-I', str(source.parent),

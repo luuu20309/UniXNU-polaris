@@ -50,8 +50,11 @@ performs a phone write.
 
 ## Remaining gates
 
-1. Build the experimental profile on the macOS/Xcode kernel runner and fix
-   compile or link failures.
+1. First macOS/Xcode run `40337260112` failed before compiling NativeUfs:
+   Apple Clang rejected the globally-added
+   `-Wno-unnecessary-virtual-specifier` option while building ArmDTPlatform.
+   That unsupported generic flag has been removed; rerun the build and address
+   subsequent compiler/linker diagnostics.
 2. Read the phone's RAM size, choose the matching minimal ADT, and determine
    whether DarwinBoot/iPadOS need additional Apple tree properties before use.
 3. Build a distinct ESP entry with `native-ufs-root=1` using the new kernel and
