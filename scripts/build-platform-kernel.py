@@ -94,7 +94,11 @@ def main():
     obj = ctx.tree / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837'
     bootstrap = dict(env, XNU_SOURCE_CORECRYPTO14='0', XNU_SOURCE_PTHREAD='0',
                      XNU_ARM_DT_PLATFORM='0', XNU_ARMCPU='0', XNU_NATIVE_ARCH_TIMER='0',
-                     XNU_SOURCE_MOCKFS='0', XNU_BOOT_PROGRESS='0')
+                     XNU_SOURCE_MOCKFS='0', XNU_BOOT_PROGRESS='0',
+                     # build-xnu-4k-baseline.sh refuses XNU_SHENG_PMGR=1 unless
+                     # the original-component (corecrypto) configuration is on,
+                     # so mirror that flag into the bootstrap pass as well.
+                     XNU_SHENG_PMGR='0')
     print('Bootstrap pass: compiling XNU records before external archives', flush=True)
     bootstrap_failed = False
     try:
@@ -123,6 +127,11 @@ def main():
             log_file=ctx.logs / 'storage-base.log')
         storage_base = ctx.tree / 'build/storage-base/libIOBlockStorageDevice.a'
         env['XNU_EXTRA_LD_ARCHIVES'] = f'-Wl,-force_load,{storage_base}'
+    if ctx.config.get('XNU_SHENG_PMGR', False):
+        # build-xnu-4k-baseline.sh force-loads build/sheng-platform-power/... when
+        # XNU_SHENG_PMGR=1, so the archive has to exist before the final link.
+        run(['python3', ctx.tree / 'scripts/build-sheng-platform-power.py'], cwd=ctx.tree, env=env,
+            log_file=ctx.logs / 'sheng-platform-power.log')
     # Never reuse an object compiled with the bootstrap feature selection.
     # Keep the compile records and generated headers for the archive recipes.
     for path in obj.rglob('*'):
