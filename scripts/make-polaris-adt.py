@@ -47,6 +47,12 @@ PMGR_MISC_CORES_OFFSET = 0x0
 PMGR_MISC_ACG_OFFSET = 0x4
 # /chosen: whether SEP-protected data is available (0 = no SEP on this board)
 PROTECTED_DATA_ACCESS = 0
+# APFS root volume of the selected iPadOS image. XNU's IOFindBSDRoot reads
+# /chosen/root-matching (an XML-serialized dictionary) and waits for the IOMedia
+# whose UUID matches; without it the fallback looks for HFS media and the boot
+# panics "Failed to mount root device". Cross-checked against UniXNU's sheng
+# device record, which pins the same value for this image.
+ROOT_VOLUME_UUID = '04769D26-2CA0-4825-B443-E2E5F88300F2'
 TIMEBASE = 19200000
 TIMER_INTID = 19
 # 4x Cortex-A55 (MPIDR 0x000..0x300) + 4x Cortex-A75 (0x400..0x700); SDM845
@@ -54,6 +60,23 @@ TIMER_INTID = 19
 SILVER_CORES = 4
 SILVER_HZ = 1804800000
 GOLD_HZ = 2803200000
+
+
+def root_matching():
+    """Serialized IOKit matching dictionary selecting the APFS root volume.
+
+    IOFindBSDRoot() reads this with OSUnserializeXML() and hands the resulting
+    OSDictionary to waitForService, so it has to be the XML container format
+    IOKit uses, not a plist. The UUID is uppercase and matches the volume on the
+    root image.
+    """
+    return (
+        '<dict>'
+        '<key>IOProviderClass</key><string>IOMedia</string>'
+        '<key>IOPropertyMatch</key>'
+        '<dict><key>UUID</key><string>' + ROOT_VOLUME_UUID + '</string></dict>'
+        '</dict>'
+    ).encode() + b'\0'
 
 
 def u32(value):
@@ -148,6 +171,7 @@ def build(*, cpu_count=1, dram_size=DRAM_SIZE_6, owned_memory_size=0x40000000,
             ('darwinboot-memory-size', u64(owned_memory_size)),
             ('darwinboot-memory-range', u64(DRAM_BASE, dram_size)),
             ('crypto-hash-method', b'sha2-384\0'),
+            ('root-matching', root_matching()),
             *empty_nvram_proxy(),
         ], [node('memory-map'), node('manifest-properties')]),
         node('cpus', [('#address-cells', u32(1)), ('#size-cells', u32(0))], cpus),

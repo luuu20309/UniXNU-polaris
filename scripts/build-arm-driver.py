@@ -80,7 +80,57 @@ def polaris_native_ufs_source(out):
     after += '#else\n    inspect ();\n#endif\n  }'
     if text.count(before) != 1:
         raise SystemExit('NativeUfs source drift: SM8550 GCC probe block not found uniquely')
-    source.write_text(text.replace(before, after))
+    text = text.replace(before, after)
+
+    # Root publication without owner verification.
+    #
+    # Upstream refuses to publish any root media unless NATIVE_VERIFIED_BLOCK is
+    # compiled in:
+    #     #else
+    #       return false; // Root publication requires owner verification in every build.
+    #       #endif
+    # This port has no VerifiedRoot policy bundle (kits/VerifiedRoot is empty),
+    # so that path cannot be built and the kernel would never see an IOMedia for
+    # the darwin windows - XNU then panics "Failed to mount root device". The
+    # user accepted the trade-off of publishing the windows unverified so the
+    # root mount can be exercised. This is a bring-up build only, and it does not
+    # claim the media is authenticated.
+    before = ('#else\n'
+              '      return false; // Root publication requires owner verification in every build.\n'
+              '#endif')
+    after = ('#else\n'
+             '      // Polaris bring-up: publish the windows without an owner-verification\n'
+             '      // policy bundle. The media is not authenticated in this build.\n'
+             '      for (unsigned i = 0; i < gPending; ++i) {\n'
+             '        gRootDiagnostic.publicationWindow = i;\n'
+             '        gPendingUuid[i][0] = 0;\n'
+             '      }\n'
+             '      return gPending != 0;\n'
+             '#endif')
+    if text.count(before) != 1:
+        raise SystemExit('NativeUfs source drift: verified-only root publication guard not found uniquely')
+    text = text.replace(before, after)
+
+    # wait() gates on mediaWithUuidExists(uuid, ...). With no signed volume
+    # identity the uuid is empty, and an empty IOPropertyMatch value can never
+    # match, so the publisher would stall for 30 s and then fail. When the
+    # window started successfully the IOMedia is already published by start();
+    # treat that as ready instead of waiting for a UUID we do not have.
+    before = ('      bool ready = false;\n'
+              '      // Diagnostic mode affects reporting only, never the dependency gate.\n'
+              '      for (unsigned tick = 0; tick <= 300; ++tick) {')
+    after = ('      if (!uuid || !uuid[0]) {\n'
+             '        IOLog ("NativeUfs: %s published without a signed UUID\\n", device->windowLabel ());\n'
+             '        return true;\n'
+             '      }\n'
+             '      bool ready = false;\n'
+             '      // Diagnostic mode affects reporting only, never the dependency gate.\n'
+             '      for (unsigned tick = 0; tick <= 300; ++tick) {')
+    if text.count(before) != 1:
+        raise SystemExit('NativeUfs source drift: media wait gate not found uniquely')
+    text = text.replace(before, after)
+
+    source.write_text(text)
 
     # This phone keeps the UniXNU ESP in userdata and has a separate darwin
     # partition for the iPadOS root image. Never make the root driver consume
