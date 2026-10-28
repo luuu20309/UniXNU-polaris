@@ -99,6 +99,42 @@ class AdtTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 polaris.build(**kwargs)
 
+    def test_every_interrupt_resolves_to_a_registered_controller(self):
+        """Regression: a dangling interrupt-parent spins IODeviceTreeAlloc forever.
+
+        IODTMapOneInterrupt's `do { ... } while (parent)` clears `parent` only at
+        an "interrupt-controller" or "interrupt-map" node. AddPHandle registers a
+        node only when it has BOTH "#interrupt-cells" and "AAPL,phandle", and
+        FindPHandle resolves by that phandle. So a node carrying "interrupts" must
+        name a parent that carries both keys and is a controller, or XNU never
+        returns from InitIOKit (observed on the phone as a silent hang).
+        """
+        tree = self.tree(ipad_identity=True)
+
+        controllers = {}
+        for path, props in tree.items():
+            if 'interrupt-controller' not in props:
+                continue
+            self.assertIn('#interrupt-cells', props, f'{path} cannot be an interrupt parent')
+            self.assertIn('AAPL,phandle', props, f'{path} cannot be resolved by FindPHandle')
+            controllers[struct.unpack('<I', props['AAPL,phandle'])[0]] = path
+
+        bearing = [p for p, props in tree.items()
+                   if 'interrupts' in props or 'AAPL,interrupts' in props]
+        self.assertTrue(bearing, 'the UFS node should still declare its interrupt')
+
+        for path in bearing:
+            props = tree[path]
+            self.assertIn('interrupt-parent', props,
+                          f'{path} would fall back to its bus parent, which is not a controller')
+            phandle = struct.unpack('<I', props['interrupt-parent'])[0]
+            self.assertIn(phandle, controllers,
+                          f'{path} points at phandle {phandle:#x}, which no controller publishes')
+            cells = struct.unpack('<I', tree[controllers[phandle]]['#interrupt-cells'])[0]
+            self.assertGreaterEqual(cells, 1)
+            self.assertEqual(len(props['interrupts']) % (cells * 4), 0,
+                             f'{path} "interrupts" does not divide into {cells}-cell entries')
+
 
 if __name__ == '__main__':
     unittest.main()
