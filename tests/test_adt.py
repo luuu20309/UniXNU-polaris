@@ -78,6 +78,24 @@ class AdtTests(unittest.TestCase):
         self.assertNotIn('/cpus/cpu1', tree)
         self.assertEqual(tree['/psci']['method'], b'smc\0')
 
+    def test_amfi_reads_both_properties_before_the_security_stack_starts(self):
+        """Regression: AMFI panics on a tree without these two u32 properties.
+
+        Observed on the phone as
+          "AMFI: no amfi-only-platform-code device tree node!" @AppleMobileFileIntegrity.cpp:5026
+        AMFI then reads /chosen "protected-data-access" the same way, and both
+        have a sibling "unexpected size (%u)!" panic, so each must be exactly one
+        u32. The root carries the first, /chosen the second.
+        """
+        tree = self.tree(ipad_identity=True)
+        # decode() labels the root node '' and children '<parent>/<name>'
+        for path, key in (('', 'amfi-only-platform-code'),
+                          ('/chosen', 'protected-data-access')):
+            self.assertIn(path, tree, f'{path or "/"} node missing')
+            props = tree[path]
+            self.assertIn(key, props, f'{key} missing from {path or "/"}')
+            self.assertEqual(len(props[key]), 4, f'{key} must be one u32')
+
     def test_eight_gib_bank_option(self):
         tree = self.tree(dram_size=polaris.DRAM_SIZE_8)
         self.assertEqual(struct.unpack('<Q', tree['/chosen']['dram-size'])[0], 0xfcc00000)
