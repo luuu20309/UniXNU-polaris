@@ -121,19 +121,21 @@ def build(*, cpu_count=1, dram_size=DRAM_SIZE_6, owned_memory_size=0x40000000,
     ]
     if ipad_identity:
         root_properties.insert(2, ('target-type', b'J120\0'))
-        # AMFI's initializer panics with "no amfi-only-platform-code device
-        # tree node!" unless the root node carries this property, and with
-        # "unexpected size" unless it is a single u32. The value is a platform
-        # code, not a capability switch; 0 is what a non-Apple bring-up tree
-        # uses, and AMFI only validates the width here.
-        root_properties.append(('amfi-only-platform-code', u32(AMFI_PLATFORM_CODE)))
     return node('device-tree', root_properties, [
         node('chosen', [
             ('random-seed', seed),
-            # AMFI also reads this u32 from /chosen and panics on "no
-            # protected-data-access device tree node!" / "unexpected size".
-            # It reports whether protected data (the SEP-backed keybag) is
-            # usable; a bring-up tree without a SEP answers 0.
+            # AMFI reads BOTH of these u32 properties from /chosen while it
+            # initializes, and panics if either is absent or is not exactly
+            # four bytes:
+            #   "AMFI: no amfi-only-platform-code device tree node!"   :5026
+            #   "AMFI: no protected-data-access device tree node!"
+            # Verified against the kext: at 0xfffffff005ab4bf8 the code does
+            # SecureDTLookupEntry(NULL, "/chosen", ...) and then
+            # getProperty("/chosen", "amfi-only-platform-code"); putting the
+            # property on the root node instead does not satisfy it.
+            # Both are 0 here: this board has no SEP, and AMFI only checks
+            # presence and width.
+            ('amfi-only-platform-code', u32(AMFI_PLATFORM_CODE)),
             ('protected-data-access', u32(PROTECTED_DATA_ACCESS)),
             ('dram-base', u64(DRAM_BASE)), ('dram-size', u64(dram_size)),
             ('darwinboot-memory-size', u64(owned_memory_size)),

@@ -88,13 +88,15 @@ class AdtTests(unittest.TestCase):
         u32. The root carries the first, /chosen the second.
         """
         tree = self.tree(ipad_identity=True)
-        # decode() labels the root node '' and children '<parent>/<name>'
-        for path, key in (('', 'amfi-only-platform-code'),
-                          ('/chosen', 'protected-data-access')):
-            self.assertIn(path, tree, f'{path or "/"} node missing')
-            props = tree[path]
-            self.assertIn(key, props, f'{key} missing from {path or "/"}')
+        # decode() labels the root node '' and children '<parent>/<name>'.
+        # Both live in /chosen: AMFI resolves "/chosen" with SecureDTLookupEntry
+        # and then getProperty() on that node, so the root node does not satisfy
+        # it (that mistake cost one flash round).
+        for key in ('amfi-only-platform-code', 'protected-data-access'):
+            props = tree['/chosen']
+            self.assertIn(key, props, f'{key} missing from /chosen')
             self.assertEqual(len(props[key]), 4, f'{key} must be one u32')
+            self.assertNotIn(key, tree[''], f'{key} must not be on the root node')
 
     def test_eight_gib_bank_option(self):
         tree = self.tree(dram_size=polaris.DRAM_SIZE_8)
