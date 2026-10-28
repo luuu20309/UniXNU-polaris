@@ -27,6 +27,14 @@ UFS_HC_SIZE = 0x2500
 # SDM845 and SM7150 share the same GICv3 layout observed on both boards.
 GICD = 0x17A00000
 GICR = 0x17A60000
+# Locally assigned node handle for the GIC. XNU's IODTMapOneInterrupt follows
+# "interrupt-parent" to an "interrupt-controller" node and names it with
+# IODTInterruptControllerName(), which reads "AAPL,phandle" and asserts when it
+# is absent (iokit/Kernel/IODeviceTreeSupport.cpp). A controller node also needs
+# "#interrupt-cells" for IODTGetICellCounts(). Pick a value no real Apple tree
+# uses and keep it stable so serial logs stay comparable.
+GIC_PHANDLE = 0x1
+INTERRUPT_CELLS = 1
 TIMEBASE = 19200000
 TIMER_INTID = 19
 # 4x Cortex-A55 (MPIDR 0x000..0x300) + 4x Cortex-A75 (0x400..0x700); SDM845
@@ -128,6 +136,13 @@ def build(*, cpu_count=1, dram_size=DRAM_SIZE_6, owned_memory_size=0x40000000,
             ('ranges', u64(0, ARMIO_BASE, 0x100000000 - ARMIO_BASE)),
         ], [node('intc', [
             ('compatible', b'arm,gic-v3\0'), ('interrupt-controller', b''),
+            # A controller is only reachable as an interrupt parent when it
+            # carries both keys: AddPHandle() registers a node that has
+            # "#interrupt-cells" and "AAPL,phandle", and FindPHandle() resolves
+            # by the phandle. Without them IODTMapOneInterrupt() spins on the
+            # parent it was handed instead of terminating at the controller.
+            ('#interrupt-cells', u32(INTERRUPT_CELLS)),
+            ('AAPL,phandle', u32(GIC_PHANDLE)),
             ('reg', u64(GICD - ARMIO_BASE, 0x10000, GICR - ARMIO_BASE, 0x100000)),
             ('redistributor-stride', u64(0x20000)),
             ('virtual-timer-intid', u32(TIMER_INTID)),
@@ -135,6 +150,11 @@ def build(*, cpu_count=1, dram_size=DRAM_SIZE_6, owned_memory_size=0x40000000,
             ('compatible', b'qcom,sdm845-ufshc\0qcom,ufshc\0jedec,ufs-2.0\0'),
             ('reg', u64(UFS_HC_BASE - ARMIO_BASE, UFS_HC_SIZE)),
             ('interrupts', u32(265)),
+            # Point the interrupt at the GIC explicitly. Relying on the bus
+            # parent is not enough: IODTFindInterruptParent() would hand
+            # IODeviceTreeAlloc the "arm-io" node, which has no
+            # "interrupt-controller" property.
+            ('interrupt-parent', u32(GIC_PHANDLE)),
         ])]),
     ])
 
