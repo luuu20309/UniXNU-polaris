@@ -23,6 +23,28 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def patch_storage_provider_personality(tree):
+    """Match the kernel-private storage base without editing Apple kext code."""
+    tool = tree / 'kits/NativePrelink/emit_prelink.py'
+    source = tool.read_text()
+    before = """        entry = copy.deepcopy(entries[identifier])
+        if '_NativePrelinkEarlySecurityInit' in entry:
+"""
+    after = """        entry = copy.deepcopy(entries[identifier])
+        if identifier == 'com.apple.iokit.IOStorageFamily':
+            personalities = entry.get('IOKitPersonalities')
+            driver = personalities.get('IOBlockStorageDriver') if isinstance(personalities, dict) else None
+            if not isinstance(driver, dict) or driver.get('IOProviderClass') != 'IOBlockStorageDevice':
+                raise ValueError('Original IOBlockStorageDriver provider class changed')
+            driver['IOProviderClass'] = 'IOPolarisBlockDevice'
+            report['polaris_storage_provider_alias'] = 'IOPolarisBlockDevice'
+        if '_NativePrelinkEarlySecurityInit' in entry:
+"""
+    if source.count(before) != 1:
+        raise SystemExit('NativePrelink metadata assembly changed; refusing provider alias')
+    tool.write_text(source.replace(before, after))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--base', type=Path, required=True)
@@ -67,6 +89,8 @@ def main():
             })
     feeds.fetch(ctx, modules, only=references)
     tree.assemble(ctx, modules)
+    if ctx.config.get('XNU_NATIVE_UFS', False):
+        patch_storage_provider_personality(ctx.tree)
     # UniXNU resolves patch sets as whole directories. Materialize the pinned
     # common set and overlay the reviewed fixes without editing its checkout
     # or accidentally discarding all the other common XNU patches.

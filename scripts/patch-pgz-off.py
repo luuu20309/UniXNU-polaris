@@ -42,12 +42,23 @@ costs no bring-up capability. It does remove a security mitigation from a
 development kernel used only for this port.
 """
 import struct
+import subprocess
 import sys
 from pathlib import Path
 
-PGZ_ALL_VA = 0xFFFFFFF007167A74
 SEGMENT_COMMAND = 0x19
 MACHO64_MAGIC = 0xFEEDFACF
+
+
+def pgz_address(source):
+    symbols = subprocess.check_output(
+        ['xcrun', 'llvm-nm', '--defined-only', str(source)], text=True)
+    matches = [int(fields[0], 16) for line in symbols.splitlines()
+               if (fields := line.split()) and len(fields) == 3
+               and fields[2] == '_pgz_all']
+    if len(matches) != 1:
+        raise SystemExit(f'expected one defined _pgz_all in {source}, found {len(matches)}')
+    return matches[0]
 
 
 def main():
@@ -55,6 +66,7 @@ def main():
         raise SystemExit(f'usage: {sys.argv[0]} INPUT.macho OUTPUT.macho')
     source, output = Path(sys.argv[1]), Path(sys.argv[2])
     data = bytearray(source.read_bytes())
+    pgz_all_va = pgz_address(source)
 
     magic, _, _, _, ncmds, _, _, _ = struct.unpack_from('<IiiIIIII', data, 0)
     if magic != MACHO64_MAGIC:
@@ -67,22 +79,24 @@ def main():
             name, vmaddr, vmsize, fileoff, filesize, maxprot, initprot, _, _ = \
                 struct.unpack_from('<16sQQQQiiII', data, offset + 8)
             span = min(vmsize, filesize)
-            if filesize and vmaddr <= PGZ_ALL_VA < vmaddr + span:
-                at = fileoff + PGZ_ALL_VA - vmaddr
+            if filesize and vmaddr <= pgz_all_va < vmaddr + span:
+                at = fileoff + pgz_all_va - vmaddr
                 segment = name.rstrip(b'\0').decode()
+                if segment != '__DATA_CONST':
+                    raise SystemExit(f'_pgz_all unexpectedly in {segment}')
                 if data[at] != 1:
                     raise SystemExit(f'pgz_all is {data[at]:#04x}, expected 1 (true)')
                 if not initprot & 1:
                     raise SystemExit(f'pgz_all is not in a readable segment ({segment})')
                 data[at] = 0
                 output.write_bytes(data)
-                print(f'{output}: pgz_all at {PGZ_ALL_VA:#x} in {segment} '
+                print(f'{output}: pgz_all at {pgz_all_va:#x} in {segment} '
                       f'(initprot {initprot:#x}), file offset {at:#x}: 1 -> 0')
                 print(f'  {source.name} {len(data)} bytes was sha256 {source_sha(source)}')
                 print(f'  {output.name} written')
                 return
         offset += size
-    raise SystemExit(f'{source} does not map {PGZ_ALL_VA:#x}')
+    raise SystemExit(f'{source} does not map {pgz_all_va:#x}')
 
 
 def source_sha(path):
