@@ -155,6 +155,27 @@ class AdtTests(unittest.TestCase):
             self.assertEqual(len(props['interrupts']) % (cells * 4), 0,
                              f'{path} "interrupts" does not divide into {cells}-cell entries')
 
+    def test_pmgr_node_satisfies_the_bring_up_pmgr_personality(self):
+        """Regression: AMFI panics with "AMFI: No PMGR?" without this node.
+
+        AMFI::ConfigurationSettings resolves ApplePMGRNub through
+        IOService::serviceMatching and panics when nothing matches. ApplePMGR's
+        only personality is AppleBringUpPMGR:
+            IOProviderClass = AppleARMIODevice
+            IONameMatch     = pmgr1,bring-up
+        AppleARMIODevice providers are the arm-io children that
+        ArmDTPlatform::createDeviceNubs publishes, so this node must be a child
+        of arm-io and carry that compatible. initRegGroups() additionally
+        requires misc-cores-offset and misc-acg-offset.
+        """
+        tree = self.tree(ipad_identity=True)
+        pmgr = tree['/arm-io/pmgr']
+        self.assertEqual(pmgr['compatible'], b'pmgr1,bring-up\0')
+        for key in ('misc-cores-offset', 'misc-acg-offset'):
+            self.assertIn(key, pmgr, f'{key} required by AppleBringUpPMGR::initRegGroups')
+            self.assertEqual(len(pmgr[key]), 4)
+        self.assertEqual(len(pmgr['reg']), 16)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -38,6 +38,13 @@ INTERRUPT_CELLS = 1
 # AMFI reads this u32 from the device-tree root; only its presence and width
 # are validated, so a non-Apple bring-up tree uses 0.
 AMFI_PLATFORM_CODE = 0
+# SDM845 APCS/PMGR block. The bring-up PMGR personality only needs an
+# AppleARMIODevice provider and the two misc offsets below; it does not touch
+# these registers while AMFI is initializing.
+PMGR_BASE = 0x17980000
+PMGR_SIZE = 0x6000
+PMGR_MISC_CORES_OFFSET = 0x0
+PMGR_MISC_ACG_OFFSET = 0x4
 # /chosen: whether SEP-protected data is available (0 = no SEP on this board)
 PROTECTED_DATA_ACCESS = 0
 TIMEBASE = 19200000
@@ -152,7 +159,19 @@ def build(*, cpu_count=1, dram_size=DRAM_SIZE_6, owned_memory_size=0x40000000,
             ('device_type', b'polaris-io\0'),
             ('#address-cells', u32(2)), ('#size-cells', u32(2)),
             ('ranges', u64(0, ARMIO_BASE, 0x100000000 - ARMIO_BASE)),
-        ], [node('intc', [
+        ], [node('pmgr', [
+            # AMFI's ConfigurationSettings reads ApplePMGRNub and panics with
+            # "AMFI: No PMGR?" when no ApplePMGR service is present. ApplePMGR's
+            # only personality is AppleBringUpPMGR, which matches this
+            # compatible on an AppleARMIODevice provider - i.e. an arm-io child.
+            # ArmDTPlatform::createDeviceNubs publishes every arm-io child, so
+            # this node is what makes the service appear.
+            ('compatible', b'pmgr1,bring-up\0'),
+            ('reg', u64(PMGR_BASE - ARMIO_BASE, PMGR_SIZE)),
+            # AppleBringUpPMGR::initRegGroups requires both of these offsets.
+            ('misc-cores-offset', u32(PMGR_MISC_CORES_OFFSET)),
+            ('misc-acg-offset', u32(PMGR_MISC_ACG_OFFSET)),
+        ]), node('intc', [
             ('compatible', b'arm,gic-v3\0'), ('interrupt-controller', b''),
             # A controller is only reachable as an interrupt parent when it
             # carries both keys: AddPHandle() registers a node that has
