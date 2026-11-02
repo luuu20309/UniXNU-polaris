@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess
+import struct
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +33,39 @@ args = "-v serial=0 debug=0x14e kt_fixed_zones=120 cpus=1 native-ufs-root=1 -no_
 '''
 
 
+def require_trust_placeholder(data):
+    """Require the unique, zeroed /chosen/memory-map/TrustCache property."""
+    found = []
+    def walk(offset, parent):
+        count, children = struct.unpack_from('<II', data, offset)
+        offset += 8
+        if count > 1024 or children > 1024:
+            raise ValueError('invalid ADT node counts')
+        props = []
+        for _ in range(count):
+            key, size = struct.unpack_from('<32sI', data, offset)
+            start = offset + 36
+            offset = start + ((size + 3) & ~3)
+            if offset > len(data):
+                raise ValueError('truncated ADT property')
+            props.append((key.split(b'\0', 1)[0], data[start:start + size]))
+        names = [v.rstrip(b'\0').decode('ascii') for k, v in props if k == b'name']
+        if len(names) != 1:
+            raise ValueError('ADT node has no unique name')
+        path = parent + (names[0],)
+        if path[-2:] == ('chosen', 'memory-map'):
+            found.extend(v for k, v in props if k == b'TrustCache')
+        for _ in range(children):
+            offset = walk(offset, path)
+        return offset
+    try:
+        end = walk(0, ())
+    except (struct.error, UnicodeError) as exc:
+        raise ValueError('invalid ADT') from exc
+    if end != len(data) or found != [bytes(16)]:
+        raise ValueError('ADT needs a unique zeroed /chosen/memory-map/TrustCache (generate with --trust-cache)')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--kernel', type=Path, required=True, help='prelinked kernel.macho')
@@ -47,12 +81,17 @@ def main():
         'EFI/UniXNU/Payloads/DarwinBoot.efi': efi / 'loader/build/DarwinBoot/DEBUG_GCC/AARCH64/DarwinBoot.efi',
         'EFI/UniXNU/Payloads/kernel.macho': args.kernel.resolve(),
         'EFI/UniXNU/Payloads/kernel.macho.adt': args.adt.resolve(),
-        'EFI/UniXNU/Payloads/trust.bundle': args.trust.resolve(),
+        'EFI/UniXNU/Payloads/kernel.macho.trustcache': args.trust.resolve(),
         'EFI/UniXNU/unixnu.toml': None,
     }
     for name, path in files.items():
         if path is not None and not path.is_file():
             raise SystemExit(f'missing input: {path}')
+
+    try:
+        require_trust_placeholder(args.adt.read_bytes())
+    except ValueError as error:
+        parser.error(str(error))
 
     out = args.out.resolve()
     out.parent.mkdir(parents=True, exist_ok=True)

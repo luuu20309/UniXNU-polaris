@@ -1,0 +1,49 @@
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -4586,6 +4586,14 @@
+ static int polaris_cache_hit;
+ static long long polaris_cache_size;
+ static int polaris_openres;
++
++/*
++ * Polaris bring-up probe state (see open1): the last path a non-init process
++ * tried to open, reported when that process exits critically.
++ */
++char polaris_last_open_path[128];
++volatile int polaris_last_open_pid;
++volatile int polaris_last_open_flags;
+ 
+ int
+ open1(vfs_context_t ctx, struct nameidata *ndp, int uflags,
+@@ -4650,6 +4658,31 @@
+ 		}
+ 	}
+ 
++	/*
++	 * Polaris bring-up probe: remember the last path a non-init process tried
++	 * to open. mount(8) runs with no path arguments, so the useful evidence is
++	 * which file it looked for just before it gave up. Inert unless the
++	 * polaris-opentrace boot argument is set.
++	 */
++	{
++		extern boolean_t PE_parse_boot_argn(const char *, void *, int);
++		static int polaris_opentrace = -1;
++		if (polaris_opentrace < 0) {
++			int trace_value = 0;
++			(void)PE_parse_boot_argn("polaris-opentrace", &trace_value,
++			    sizeof(trace_value));
++			polaris_opentrace = trace_value;
++		}
++		if (polaris_opentrace && p != PROC_NULL && proc_getpid(p) != 1 &&
++		    UIO_SEG_IS_USER_SPACE(ndp->ni_segflg)) {
++			size_t traced_len = 0;
++			(void)copyinstr(ndp->ni_dirp, polaris_last_open_path,
++			    sizeof(polaris_last_open_path) - 1, &traced_len);
++			polaris_last_open_pid = proc_getpid(p);
++			polaris_last_open_flags = oflags;
++		}
++	}
++
+ 	amode = oflags & O_ACCMODE;
+ 	/*
+ 	 * Because O_RDONLY is 0, it is not possible to distinguish between

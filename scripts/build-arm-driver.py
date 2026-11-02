@@ -5,6 +5,7 @@ Used inside the assembled UniXNU tree. Runs the recorded compiler and xcrun
 ar; writes only build/<component>/. Does not access a device.
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -130,6 +131,66 @@ def polaris_native_ufs_source(out):
         raise SystemExit('NativeUfs source drift: media wait gate not found uniquely')
     text = text.replace(before, after)
 
+    if os.environ.get('XNU_POLARIS_SYSTEMOS_MOUNT') == '1':
+        anchor = 'static void captureMissingMedia (const char *uuid)\n'
+        if text.count(anchor) != 1:
+            raise SystemExit('NativeUfs source drift: SystemOS resolver anchor')
+        resolver = r"""
+// Experimental unverified Polaris bring-up. Return a BSD path only when the
+// unique expected UUID belongs to this driver's SystemOS window. Not a proof
+// of cryptographic authenticity.
+extern "C" int polaris_systemos_bsd_path (char *out, size_t outSize)
+{
+  static const char wanted[] = "8846FE78-2910-4297-AF97-D59BB6F8FC16";
+  if (!out || outSize < 16) return 0;
+  for (unsigned tick = 0; tick < 300; ++tick) {
+    NativeUfsBlock *system = nullptr;
+    for (unsigned i = 0; i < gPending; ++i) {
+      if (gPendingDevice[i] && !strcmp (gPendingDevice[i]->windowLabel (), "SystemOS")) {
+        if (system) return 0;
+        system = gPendingDevice[i];
+      }
+    }
+    OSDictionary *matching = IOService::serviceMatching ("IOMedia");
+    OSIterator *iterator = matching ? IOService::getMatchingServices (matching) : nullptr;
+    unsigned found = 0;
+    char name[32] = {};
+    while (system && iterator) {
+      IORegistryEntry *media = OSDynamicCast (IORegistryEntry, iterator->getNextObject ());
+      if (!media) break;
+      OSString *uuid = OSDynamicCast (OSString, media->getProperty ("UUID"));
+      OSString *bsd = OSDynamicCast (OSString, media->getProperty (kIOBSDNameKey));
+      if (!uuid || !bsd || strcmp (uuid->getCStringNoCopy (), wanted)) continue;
+      IORegistryIterator *parents = IORegistryIterator::iterateOver (
+        media, gIOServicePlane, kIORegistryIterateRecursively | kIORegistryIterateParents);
+      bool belongs = parents && ufsMediaHasAncestor (*parents, system);
+      OSSafeReleaseNULL (parents);
+      if (!belongs) continue;
+      const char *candidate = bsd->getCStringNoCopy ();
+      if (strncmp (candidate, "disk", 4) || strlen (candidate) >= sizeof (name)) continue;
+      bool valid = true;
+      for (unsigned j = 4; candidate[j]; ++j) {
+        if ((candidate[j] < '0' || candidate[j] > '9') && candidate[j] != 's') valid = false;
+      }
+      if (!valid) continue;
+      strlcpy (name, candidate, sizeof (name));
+      ++found;
+    }
+    OSSafeReleaseNULL (iterator);
+    OSSafeReleaseNULL (matching);
+    if (found > 1) return 0;
+    if (found == 1) {
+      int n = snprintf (out, outSize, "/dev/%s", name);
+      return n > 0 && static_cast<size_t> (n) < outSize;
+    }
+    IOSleep (100);
+  }
+  return 0;
+}
+
+"""
+        text = text.replace(anchor, resolver + anchor, 1)
+
     source.write_text(text)
 
     # This phone keeps the UniXNU ESP in userdata and has a separate darwin
@@ -153,18 +214,30 @@ def polaris_native_ufs_source(out):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('component', choices=['ArmDTPlatform', 'ArmCpu', 'NativeUfs'])
+    parser.add_argument('component', choices=['ArmDTPlatform', 'ArmCpu', 'NativeUfs',
+                                              'NativeMobileDisplay', 'NativeRamBlock',
+                                              'NativeAES'])
     args = parser.parse_args()
     if args.component == 'NativeUfs' and os.environ.get('XNU_NATIVE_UFS') != '1':
         print('NativeUfs: skipped (CONFIG_XNU_NATIVE_UFS is disabled)')
         return
     out = ROOT / 'build' / {'ArmCpu': 'armcpu', 'ArmDTPlatform': 'armdt-platform',
-                            'NativeUfs': 'native-ufs'}[args.component]
+                            'NativeUfs': 'native-ufs',
+                            'NativeMobileDisplay': 'native-mobile-display',
+                            'NativeRamBlock': 'native-ram-block',
+                            'NativeAES': 'native-aes'}[args.component]
     out.mkdir(parents=True, exist_ok=True)
     recipe = ROOT / 'build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/iokit/DEVELOPMENT/IOPlatformExpert.cpo.json'
     record = json.loads(recipe.read_text().strip().rstrip(','))
-    source = (polaris_native_ufs_source(out) if args.component == 'NativeUfs' else
-              ROOT / 'drivers' / args.component / (args.component + '.cpp'))
+    if args.component == 'NativeUfs':
+        source = polaris_native_ufs_source(out)
+    else:
+        source = ROOT / 'drivers' / args.component / (args.component + '.cpp')
+        if not source.is_file():
+            raise SystemExit(f'{args.component} submodule is missing: {source}')
+    # Drivers ship their own headers (OriginalMobileFramebufferABI.h and the
+    # NativeUfs ABI shims); the recorded command only carries XNU's include path.
+    source_dir = source.parent
     destination = out / (args.component + '.o')
     command = []
     arguments = record['arguments']
@@ -184,11 +257,21 @@ def main():
     command.extend(['-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
                     '-Wno-c99-designator', '-Wno-reorder-init-list',
                     '-Wno-deprecated-enum-enum-conversion',
+                    # Kept because every kernel that has reached PID 1 on this
+                    # phone was compiled with this sysroot. Dropping it changes
+                    # the generated __text (34592 vs 33644 bytes for the same
+                    # source), which is not a portability-only difference.
+                    '-isysroot', subprocess.check_output(
+                        ['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True).strip(),
                     '-I', str(ROOT / '.cache/xnu-work/osfmk')])
+    command.extend(['-I', str(source_dir)])
+    if args.component in ('NativeUfs', 'NativeRamBlock'):
+        # Both subclass IOBlockStorageDevice, whose header comes from the
+        # storage ABI capture rather than the open XNU tree.
+        command.extend(['-I', str(ROOT / 'build/storage-abi/include')])
     if args.component == 'NativeUfs':
-        command.extend(['-I', str(source.parent),
-                        '-I', str(ROOT / 'build/storage-abi/include'),
-                        '-DNATIVE_UFS_POLARIS=1', '-mgeneral-regs-only'])
+        command.append('-DNATIVE_UFS_POLARIS=1')
+    command.append('-mgeneral-regs-only')
     (out / 'compile-command.json').write_text(json.dumps(command, indent=2) + '\n')
     result = subprocess.run(command, cwd=record['directory'], capture_output=True, text=True)
     (out / 'compile.log').write_text(result.stdout + result.stderr)
@@ -209,6 +292,66 @@ def main():
     archive = out / ('lib' + args.component + '.a')
     archive.unlink(missing_ok=True)
     subprocess.run(['xcrun', 'ar', 'rcs', archive, destination], check=True)
+
+    if args.component == 'NativeRamBlock':
+        # build-xnu-4k-baseline.sh:658 force-loads build/native-ram-block/
+        # libNativeRamBlock.a. The driver publishes an IOBlockStorageDevice so
+        # IOStorageFamily can raise a real IOMedia carrying the seed's APFS
+        # UUID; the kernel then finds it by UUID instead of by /dev/md0, which
+        # APFS refuses (alioth measured ENOENT on hardware 2026-10-26).
+        report = {
+            'archive_sha256': hashlib.sha256(archive.read_bytes()).hexdigest(),
+            'compiled_object_sha256': hashlib.sha256(destination.read_bytes()).hexdigest(),
+        }
+        (out / 'bindings.json').write_text(json.dumps(report, indent=2) + '\n')
+        print(f'{args.component}: archive and bindings report written')
+
+    if args.component == 'NativeMobileDisplay':
+        # Second translation unit: base-class ctor/dtor plus the provider probe
+        # that IOUserClient.cpp references. Built with the same flags, added to
+        # both archives so the driver's weak references resolve.
+        stub_source = ROOT / 'scripts/native-mobile-display-stubs/NativeMobileDisplayStubs.cpp'
+        if not stub_source.is_file():
+            raise SystemExit(f'display stubs are missing: {stub_source}')
+        stub_object = out / 'NativeMobileDisplayStubs.o'
+        stub_command = []
+        replaced_source = replaced_output = False
+        for argument in command:
+            if argument == str(source):
+                stub_command.append(str(stub_source))
+                replaced_source = True
+            elif argument == str(destination):
+                stub_command.append(str(stub_object))
+                replaced_output = True
+            else:
+                stub_command.append(argument)
+        if not (replaced_source and replaced_output):
+            raise SystemExit('could not rewrite the compile command for the stubs')
+        result = subprocess.run(stub_command, cwd=record['directory'], capture_output=True, text=True)
+        (out / 'compile-stubs.log').write_text(result.stdout + result.stderr)
+        if result.returncode:
+            raise SystemExit(result.stdout + result.stderr)
+        subprocess.run(['xcrun', 'ar', 'rcs', archive, stub_object], check=True)
+
+        # build-xnu-4k-baseline.sh force-loads libNativeMobileDisplay.late.a and
+        # refuses to link unless build-report.json pins the archive bytes and
+        # every source it was compiled from. That guard exists so a stale or
+        # hand-edited display archive cannot silently reach the kernel.
+        late = out / 'libNativeMobileDisplay.late.a'
+        late.unlink(missing_ok=True)
+        subprocess.run(['xcrun', 'ar', 'rcs', late, destination, stub_object], check=True)
+        source_sha256 = {}
+        for name in ('NativeMobileDisplay.cpp', 'OriginalMobileFramebufferABI.h'):
+            path = source_dir / name
+            source_sha256[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+        report = {
+            'archive_sha256': hashlib.sha256(late.read_bytes()).hexdigest(),
+            'compiled_object_sha256': hashlib.sha256(destination.read_bytes()).hexdigest(),
+            'source_sha256': source_sha256,
+        }
+        (out / 'build-report.json').write_text(json.dumps(report, indent=2) + '\n')
+        print(f'{args.component}: late archive and build report written')
+
     print(f'{args.component}: ARM64/iOS 17 archive built')
 
 

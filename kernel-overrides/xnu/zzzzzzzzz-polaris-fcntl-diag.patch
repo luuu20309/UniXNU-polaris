@@ -1,0 +1,73 @@
+--- a/bsd/kern/kern_descrip.c
++++ b/bsd/kern/kern_descrip.c
+@@ -4018,6 +4018,23 @@
+ 			}
+ 
+ 			if (error) {
++			{
++				extern boolean_t PE_parse_boot_argn(const char *, void *, int);
++				static int polaris_fcntl_probe = -1;
++				if (polaris_fcntl_probe < 0) {
++					int probe_value = 0;
++					(void)PE_parse_boot_argn("polaris-fcntl", &probe_value,
++					    sizeof(probe_value));
++					polaris_fcntl_probe = probe_value;
++				}
++				if (polaris_fcntl_probe && p != PROC_NULL &&
++				    proc_getpid(p) == 1) {
++					const char *polaris_vn = vnode_getname(vp);
++					panic("POLARIS FCNTL rdwr err=%d want=%llu name=%s",
++					    error, (unsigned long long)kernel_blob_size,
++					    polaris_vn ? polaris_vn : "?");
++				}
++			}
+ 				ubc_cs_blob_deallocate(kernel_blob_addr,
+ 				    kernel_blob_size);
+ 				vnode_put(vp);
+@@ -4038,6 +4055,22 @@
+ 
+ 			/* ubc_blob_add() has consumed "kernel_blob_addr" if it is zeroed */
+ 			if (error) {
++			{
++				extern boolean_t PE_parse_boot_argn(const char *, void *, int);
++				static int polaris_fcntl_probe = -1;
++				if (polaris_fcntl_probe < 0) {
++					int probe_value = 0;
++					(void)PE_parse_boot_argn("polaris-fcntl", &probe_value,
++					    sizeof(probe_value));
++					polaris_fcntl_probe = probe_value;
++				}
++				if (polaris_fcntl_probe && p != PROC_NULL &&
++				    proc_getpid(p) == 1) {
++					const char *polaris_vn = vnode_getname(vp);
++					panic("POLARIS FCNTL blobadd err=%d name=%s", error,
++					    polaris_vn ? polaris_vn : "?");
++				}
++			}
+ 				if (kernel_blob_addr) {
+ 					ubc_cs_blob_deallocate(kernel_blob_addr,
+ 					    kernel_blob_size);
+@@ -4061,6 +4094,23 @@
+ 			off_t end_offset = 0;
+ 			if (blob) {
+ 				end_offset = blob->csb_end_offset;
++			}
++			{
++				extern boolean_t PE_parse_boot_argn(const char *, void *, int);
++				static int polaris_fcntl_probe = -1;
++				if (polaris_fcntl_probe < 0) {
++					int probe_value = 0;
++					(void)PE_parse_boot_argn("polaris-fcntl", &probe_value,
++					    sizeof(probe_value));
++					polaris_fcntl_probe = probe_value;
++				}
++				if (polaris_fcntl_probe && p != PROC_NULL &&
++				    proc_getpid(p) == 1) {
++					const char *polaris_vn = vnode_getname(vp);
++					panic("POLARIS FCNTL ok end=%lld start=%lld cmd=%d name=%s",
++					    (long long)end_offset, (long long)fs.fs_file_start,
++					    cmd, polaris_vn ? polaris_vn : "?");
++				}
+ 			}
+ 			error = copyout(&end_offset, argp, sizeof(end_offset));
+ 

@@ -1,0 +1,82 @@
+diff --git a/bsd/kern/sys_generic.c b/bsd/kern/sys_generic.c
+index f229fc1..e4cabc9 100644
+--- a/bsd/kern/sys_generic.c
++++ b/bsd/kern/sys_generic.c
+@@ -696,9 +696,77 @@ write_internal(struct proc *p, int fd, user_addr_t buf, user_size_t nbyte,
+ 	return writev_internal(p, fd, uio, flags, puguard, retval);
+ }
+ 
++/*
++ * Polaris bring-up probe: report what a launchd boot task writes to stderr.
++ *
++ * A failed boot task only surfaces as "exited due to exit(N)", which does not
++ * say why. The reason is on the task's stderr and this board has no console, so
++ * the message itself has to become the crash report.
++ *
++ * Enable with polaris-stderr=<pid>. Only that process and only fd 2 are
++ * reported, and only the first few writes, so an early message cannot be
++ * buried. The panic screen has one text row, so the first line is what matters.
++ *
++ * polaris-stderr=0 instead selects the mount boot task by executable name. The
++ * boot task order is not stable once the payload changes, so a hard-coded pid
++ * can silently watch the wrong process; the name cannot.
++ */
++static void
++polaris_report_write(struct proc *p, int fd, user_addr_t cbuf, size_t nbyte)
++{
++	extern boolean_t PE_parse_boot_argn(const char *, void *, int);
++	extern int strncmp(const char *, const char *, size_t);
++	static int polaris_stderr_target = -1;
++	static int polaris_stderr_count;
++	char buf[200] = {0};
++	size_t len = 0;
++
++	if (polaris_stderr_target < 0) {
++		int wanted = -1;
++		(void)PE_parse_boot_argn("polaris-stderr", &wanted,
++		    sizeof(wanted));
++		polaris_stderr_target = wanted;
++	}
++	if (polaris_stderr_target < 0 || p == PROC_NULL || fd != 2) {
++		return;
++	}
++	if (polaris_stderr_target > 0) {
++		if (proc_getpid(p) != polaris_stderr_target) {
++			return;
++		}
++	} else if (strncmp(p->p_comm, "mount", 5) != 0) {
++		return;
++	}
++	if (nbyte == 0) {
++		return;
++	}
++	if (nbyte > sizeof(buf) - 1) {
++		nbyte = sizeof(buf) - 1;
++	}
++	if (copyin(cbuf, buf, nbyte) != 0) {
++		return;
++	}
++	buf[nbyte] = '\0';
++
++	for (size_t i = 0; i < nbyte; i++) {
++		if (buf[i] == '\n' || buf[i] == '\r') {
++			buf[i] = '\0';
++			break;
++		}
++	}
++	if (buf[0] == '\0') {
++		return;
++	}
++	if (polaris_stderr_count++ >= 3) {
++		return;
++	}
++	panic("POLARIS STDERR %s[%d] [%s]", p->p_comm, proc_getpid(p), buf);
++}
++
+ int
+ write_nocancel(struct proc *p, struct write_nocancel_args *uap, user_ssize_t *retval)
+ {
++	polaris_report_write(p, uap->fd, uap->cbuf, uap->nbyte);
+ 	return write_internal(p, uap->fd, uap->cbuf, uap->nbyte, (off_t)-1, 0,
+ 	           NULL, retval);
+ }

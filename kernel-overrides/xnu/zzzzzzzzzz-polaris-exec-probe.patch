@@ -1,0 +1,91 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -1186,7 +1186,69 @@
+  * Note:	A return value other than -1 indicates subsequent image
+  *		activators should not be given the opportunity to attempt
+  *		to activate the image.
++ */
++/*
++ * Polaris bring-up probe: report what launchd asks a mount job to do.
++ *
++ * The userspace panic for a failed boot task names the task and its exit status
++ * only, so the device, mount point and options have to be read from the exec
++ * arguments. launchd uses posix_spawn(2), which does not go through
++ * __mac_execve(), so this helper is called from both entry points.
++ *
++ * Inert unless the polaris-execprobe boot argument is set.
+  */
++static void
++polaris_report_mount_exec(proc_t p, user_addr_t pathp, user_addr_t argp, int is64,
++    int from_spawn)
++{
++	extern boolean_t PE_parse_boot_argn(const char *, void *, int);
++	extern char *strnstr(const char *, const char *, size_t);
++	static int polaris_execprobe = -1;
++	char path[128] = {0};
++	user_addr_t av[4] = {0};
++	char a0[64] = {0};
++	char a1[64] = {0};
++	char a2[64] = {0};
++	char a3[64] = {0};
++	size_t len = 0;
++
++	if (polaris_execprobe < 0) {
++		int probe_value = 0;
++		(void)PE_parse_boot_argn("polaris-execprobe", &probe_value,
++		    sizeof(probe_value));
++		polaris_execprobe = probe_value;
++	}
++	if (!polaris_execprobe || p == PROC_NULL || !is64) {
++		return;
++	}
++	/*
++	 * execve replaces the calling process, so the caller must not be PID 1.
++	 * posix_spawn runs in the parent, which for launchd jobs is PID 1 itself;
++	 * there the filter selects the spawner instead of the child.
++	 */
++	if (from_spawn ? (proc_getpid(p) != 1) : (proc_getpid(p) == 1)) {
++		return;
++	}
++	if (copyinstr(pathp, path, sizeof(path) - 1, &len) != 0 ||
++	    strnstr(path, "mount", sizeof(path)) == NULL) {
++		return;
++	}
++	(void)copyin(argp, av, sizeof(av));
++	if (av[0]) {
++		(void)copyinstr(av[0], a0, sizeof(a0) - 1, &len);
++	}
++	if (av[1]) {
++		(void)copyinstr(av[1], a1, sizeof(a1) - 1, &len);
++	}
++	if (av[2]) {
++		(void)copyinstr(av[2], a2, sizeof(a2) - 1, &len);
++	}
++	if (av[3]) {
++		(void)copyinstr(av[3], a3, sizeof(a3) - 1, &len);
++	}
++	panic("POLARIS EXEC %s [%s|%s|%s|%s]", path, a0, a1, a2, a3);
++}
++
+ static int
+ exec_mach_imgact(struct image_params *imgp)
+ {
+@@ -3603,6 +3665,8 @@
+ 	vap = &__spawn_data->va;
+ 	origvap = &__spawn_data->origva;
+ 
++	polaris_report_mount_exec(p, uap->path, uap->argv, is_64, 1);
++
+ 	/* Initialize the common data in the image_params structure */
+ 	imgp->ip_user_fname = uap->path;
+ 	imgp->ip_user_argv = uap->argv;
+@@ -5185,6 +5249,9 @@
+ 		struct vnode_attr origva;
+ 	} *__execve_data;
+ 
++	polaris_report_mount_exec(p, (user_addr_t)uap->fname,
++	    (user_addr_t)uap->argp, is_64, 0);
++
+ 	/* Allocate a big chunk for locals instead of using stack since these
+ 	 * structures a pretty big.
+ 	 */

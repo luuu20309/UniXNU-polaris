@@ -4,3 +4,5 @@
 /local.toml
 __pycache__/
 *.pyc
+.DS_Store
+/work/build-venv/

@@ -44,6 +44,9 @@ def main():
     parser.add_argument('--cpus', type=int, default=1,
                         help='CPUs described by the ADT and requested by the command line (1..8)')
     parser.add_argument('--owned-memory-size', type=lambda v: int(v, 0), default=0x40000000)
+    parser.add_argument('--data-ramdisk', type=Path, default=None,
+                        help='Data seed (raw APFS image) delivered as Payloads/scratch-data.img; '
+                             'adds the initrd key and the ADT RAMDisk placeholder')
     parser.add_argument('--no-probe', action='store_true',
                         help='skip the boot-progress/panic probes on the ESP kernel copy')
     parser.add_argument('--probe-extra', default='',
@@ -80,9 +83,12 @@ def main():
 
     adt_tool = load_module('polaris_adt', ROOT / 'scripts/make-polaris-adt.py')
     prefix = load_module('cpu_prefix', ROOT / 'scripts/check-cpu-prefix.py')
+    if args.data_ramdisk is not None and not args.data_ramdisk.is_file():
+        parser.error(f'missing Data seed: {args.data_ramdisk}')
     adt = adt_tool.build(cpu_count=args.cpus,
                          dram_size=adt_tool.DRAM_SIZE_6 if args.ram == 6 else adt_tool.DRAM_SIZE_8,
-                         owned_memory_size=args.owned_memory_size)
+                         owned_memory_size=args.owned_memory_size,
+                         ramdisk=args.data_ramdisk is not None)
     try:
         prefix.validate(adt, ' '.join(kernel_args))
     except ValueError as error:
@@ -111,6 +117,10 @@ def main():
         # image it is actually measuring (no selftest is skipped or weakened).
         sp.run([sys.executable, str(ROOT / 'scripts/seal-source-crypto-kernel.py'),
                 out / 'EFI/UniXNU/Payloads/kernel.macho'], check=True)
+    if args.data_ramdisk is not None:
+        # DarwinBoot copies the seed into the darwinboot-memory window and writes
+        # its address and size into the ADT RAMDisk placeholder.
+        shutil.copyfile(args.data_ramdisk, out / 'EFI/UniXNU/Payloads/scratch-data.img')
     (out / 'EFI/UniXNU/Payloads/kernel.macho.adt').write_bytes(adt)
     (out / 'EFI/UniXNU/unixnu.toml').write_text(
         'version = 1\n'
@@ -125,12 +135,15 @@ def main():
         f'title = "{payload["title"]}"\n'
         'type = "xnu"\n'
         'path = "Payloads/kernel.macho"\n'
-        f'args = "{" ".join(kernel_args)}"\n', encoding='utf-8')
+        + ('initrd = "Payloads/scratch-data.img"\n' if args.data_ramdisk is not None else '')
+        + f'args = "{" ".join(kernel_args)}"\n', encoding='utf-8')
     (out / 'esp.json').write_text(json.dumps({
         'kernel_sha256': report['kernel_sha256'],
         'kernel_bytes': len(data), 'cpus': args.cpus, 'ram_gib': args.ram,
         'owned_memory_size': args.owned_memory_size,
         'kernel_args': kernel_args, 'cpu_prefix_checked': True,
+        'data_ramdisk_sha256': (hashlib.sha256(args.data_ramdisk.read_bytes()).hexdigest()
+                                if args.data_ramdisk is not None else None),
         'sources': report.get('sources', {}),
     }, indent=2) + '\n', encoding='utf-8')
     print(f'{out}: payload ESP assembled; cpus={args.cpus}, ram={args.ram} GiB; host-verified only')

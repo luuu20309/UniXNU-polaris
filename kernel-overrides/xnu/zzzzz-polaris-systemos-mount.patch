@@ -1,0 +1,147 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7020,15 +7020,22 @@
+ #if !DEVELOPMENT && !DEBUG
+ #error The offline owner cache mount is a development instrument
+ #endif
++#if defined(XNU_POLARIS_SYSTEMOS_MOUNT) && XNU_POLARIS_SYSTEMOS_MOUNT
++extern int polaris_systemos_bsd_path(char *, size_t);
++#else
+ extern int native_verified_block_volume_device(const char *, dev_t *, char *, size_t);
++#endif
+ #if defined(XNU_OWNER_BOOT_MANIFEST) && XNU_OWNER_BOOT_MANIFEST
+ extern int native_owner_publish_boot_manifest(dev_t, const char *, dev_t, const char *);
+ #endif
+-#if defined(XNU_OWNER_CACHE_STARTUP) && XNU_OWNER_CACHE_STARTUP
++#if (defined(XNU_OWNER_CACHE_STARTUP) && XNU_OWNER_CACHE_STARTUP) || \
++    (defined(XNU_POLARIS_SYSTEMOS_MOUNT) && XNU_POLARIS_SYSTEMOS_MOUNT)
+ extern void commpage_update_dyld_flags(uint64_t);
+ volatile uint64_t native_owner_cache_dyld_flags = 0;
+ #endif
++#if !defined(XNU_POLARIS_SYSTEMOS_MOUNT) || !XNU_POLARIS_SYSTEMOS_MOUNT
+ extern int native_verified_block_root_authorized(dev_t);
++#endif
+ volatile int native_owner_cache_stage = 0;
+ volatile int native_owner_cache_status = -1;
+ volatile int native_owner_cache_mount_status = -1;
+@@ -7074,6 +7081,10 @@
+ 	int error = EAUTH, root_authorized = 0, cache_authorized = 0;
+ 	int32_t result = 0;
+ 	user64_addr_t spec = scratch + 0x160;
++	int polaris_stop = 0;
++#if defined(XNU_POLARIS_DIAG_SYSTEMOS_MOUNT) && XNU_POLARIS_DIAG_SYSTEMOS_MOUNT
++	(void)PE_parse_boot_argn("polaris-stop", &polaris_stop, sizeof(polaris_stop));
++#endif
+ 	char device_path[64] = {0};
+ 	uint8_t mount_data[0x150] = {0};
+ 	uint64_t mount_flags = MNT_RDONLY;
+@@ -7094,12 +7105,35 @@
+ 	request.flags |= MNT_UNION;
+ #endif
+ 	if (device_vnode) vnode_put(device_vnode);
++	#if defined(XNU_POLARIS_SYSTEMOS_MOUNT) && XNU_POLARIS_SYSTEMOS_MOUNT
++	printf("WARNING: Polaris experimental SystemOS mount uses unverified root and volume\n");
++	root_authorized = (vfs_flags(root_mount) & MNT_RDONLY) && root_device != NODEV;
++	#else
+ 	root_authorized = (vfs_flags(root_mount) & MNT_RDONLY) && root_device != NODEV &&
+ 	    native_verified_block_root_authorized(root_device);
++	#endif
+ 	if (!root_authorized) goto done;
+ 	native_owner_cache_stage = 1;
++	#if defined(XNU_POLARIS_SYSTEMOS_MOUNT) && XNU_POLARIS_SYSTEMOS_MOUNT
++	if (polaris_stop == 1) {
++		panic("POLARIS STOP1 ro=%d dev=%d",
++		    (vfs_flags(root_mount) & MNT_RDONLY) != 0, (int)root_device);
++	}
++	#endif
++	#if defined(XNU_POLARIS_SYSTEMOS_MOUNT) && XNU_POLARIS_SYSTEMOS_MOUNT
++	if (!polaris_systemos_bsd_path(device_path, sizeof(device_path))) goto done;
++	vnode_t selected_vnode = NULLVP;
++	if (vnode_lookup(device_path, 0, &selected_vnode, vfs_context_current()) != 0) goto done;
++	if (vnode_vtype(selected_vnode) == VBLK) selected = vnode_specrdev(selected_vnode);
++	vnode_put(selected_vnode);
++	if (selected == NODEV) goto done;
++	if (polaris_stop == 2) {
++		panic("POLARIS STOP2 path=%s dev=%d", device_path, (int)selected);
++	}
++	#else
+ 	if (!native_verified_block_volume_device(volume, &selected, device_path,
+ 	    sizeof(device_path))) goto done;
++	#endif
+ 	strlcpy(native_owner_cache_device_path, device_path, sizeof(native_owner_cache_device_path));
+ 	native_owner_cache_selected_device = selected;
+ 	native_owner_cache_stage = 2;
+@@ -7132,13 +7166,44 @@
+ 	int native_union = (vfs_flags(cache_mount) & MNT_UNION) &&
+ 	    vnode_mountedhere(original_os_root) == cache_mount && rootvnode == mounted_root;
+ 	native_owner_cache_native_union = native_union;
++	#if defined(XNU_POLARIS_SYSTEMOS_MOUNT) && XNU_POLARIS_SYSTEMOS_MOUNT
+ 	cache_authorized = readonly && actual == selected &&
++	    !strcmp(vfs_statfs(cache_mount)->f_fstypename, "apfs");
++	#else
++	cache_authorized = readonly && actual == selected &&
+ 	    !strcmp(vfs_statfs(cache_mount)->f_fstypename, "apfs") && native_verified_block_root_authorized(actual);
++	#endif
+ #if defined(XNU_OWNER_UNION_SYSTEMOS) && XNU_OWNER_UNION_SYSTEMOS
+ 	cache_authorized = cache_authorized && native_union;
+ #endif
+ 	if (!cache_authorized) { error = EAUTH; goto done; }
+ 	native_owner_cache_stage = 5;
++	#if defined(XNU_POLARIS_SYSTEMOS_MOUNT) && XNU_POLARIS_SYSTEMOS_MOUNT
++	{
++		vnode_t cache_vnode = NULLVP;
++		int cache_lookup = vnode_lookup(
++		#if defined(XNU_OWNER_UNION_SYSTEMOS) && XNU_OWNER_UNION_SYSTEMOS
++		    "/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64",
++		#else
++		    "/private/preboot/System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64",
++		#endif
++		    0, &cache_vnode, vfs_context_current());
++		if (cache_vnode) vnode_put(cache_vnode);
++		/* The environment cache directory replaces libignition in this
++		 * unsealed composition; skipping ignition also avoids dyld's
++		 * fatal "ignition failed" path for PID 1. */
++		dyld_flags |= UINT64_C(8);
++		commpage_update_dyld_flags(dyld_flags);
++		native_owner_cache_dyld_flags = dyld_flags;
++		if (polaris_stop == 3) {
++			panic("POLARIS STOP3 path=%s dev=%d ro=%d cache=%d stop=%d",
++			    native_owner_cache_device_path, (int)actual, readonly, cache_lookup,
++			    polaris_stop);
++		}
++		printf("POLARIS SYSTEMOS READY: %s dev=%d ro=%d cache=%d\n",
++		    native_owner_cache_device_path, (int)actual, readonly, cache_lookup);
++	}
++	#endif
+ #if !defined(XNU_OWNER_UNION_SYSTEMOS) || !XNU_OWNER_UNION_SYSTEMOS
+ 	if ((error = copyout(environment, environment_vector[0], strlen(environment) + 1)) != 0 ||
+ 	    (error = copyout(environment_vector, scratch + 0x500, sizeof(environment_vector))) != 0) goto done;
+@@ -7146,13 +7211,28 @@
+ 	if ((error = copyout(fallback, scratch + 0x600, strlen(fallback) + 1)) != 0) goto done;
+ #endif
+ 	*envp = scratch + 0x500;
++	if (polaris_stop == 4) {
++		uint64_t polaris_vec[2] = {0, 0};
++		char polaris_str[96] = {0};
++		(void) copyin(scratch + 0x500, polaris_vec, sizeof(polaris_vec));
++		(void) copyin(scratch + 0x400, polaris_str, sizeof(polaris_str) - 1);
++		panic("POLARIS STOP4 vec=%llx,%llx env=%s",
++		    polaris_vec[0], polaris_vec[1], polaris_str);
++	}
+ #else
+ 	*envp = USER_ADDR_NULL;
+ #endif
+ 	native_owner_cache_stage = 6;
+ done:
+ 	if (mounted_root) vnode_put(mounted_root);
++	#if defined(XNU_POLARIS_SYSTEMOS_MOUNT) && XNU_POLARIS_SYSTEMOS_MOUNT
++	/* Under the union composition rootvnode becomes the new mount, so only
++	 * the read-only property of the original root is re-checked here; the
++	 * union identity itself is verified by native_union above. */
++	int root_recheck = root_authorized && (vfs_flags(root_mount) & MNT_RDONLY);
++	#else
+ 	int root_recheck = root_authorized && native_verified_block_root_authorized(root_device);
++	#endif
+ 	native_owner_cache_root_recheck = root_recheck;
+ 	if (!root_recheck) error = EAUTH;
+ #if defined(XNU_OWNER_BOOT_MANIFEST) && XNU_OWNER_BOOT_MANIFEST

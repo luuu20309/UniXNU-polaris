@@ -19,14 +19,44 @@ import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def isolate_prelink(tree, work):
+    """Materialize a build-local prelink copy before applying board overrides."""
+    link = tree / 'kits/NativePrelink'
+    if not link.is_symlink() or not link.resolve().is_dir():
+        raise SystemExit('Expected NativePrelink to be a link to a source directory')
+    source = link.resolve()
+    overlays = work / 'polaris-overlays'
+    overlays.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix='native-prelink-', dir=overlays))
+    target = staging / 'NativePrelink'
+    try:
+        shutil.copytree(source, target, symlinks=True,
+                        ignore=shutil.ignore_patterns('.git', '__pycache__', '*.pyc'))
+        if not (target / 'emit_prelink.py').is_file():
+            raise SystemExit('NativePrelink copy has no emit_prelink.py')
+        link.unlink()
+        link.symlink_to(target.resolve(), target_is_directory=True)
+    except BaseException:
+        if not link.exists() and not link.is_symlink():
+            link.symlink_to(source, target_is_directory=True)
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    return target
 
 
 def patch_storage_provider_personality(tree):
     """Match the kernel-private storage base without editing Apple kext code."""
     tool = tree / 'kits/NativePrelink/emit_prelink.py'
     source = tool.read_text()
+    if "report['polaris_storage_provider_alias'] = 'IOPolarisBlockDevice'" in source:
+        if source.count("driver['IOProviderClass'] = 'IOPolarisBlockDevice'") != 1:
+            raise SystemExit('Existing Polaris storage provider alias is ambiguous')
+        return
     before = """        entry = copy.deepcopy(entries[identifier])
         if '_NativePrelinkEarlySecurityInit' in entry:
 """
@@ -90,6 +120,7 @@ def main():
     feeds.fetch(ctx, modules, only=references)
     tree.assemble(ctx, modules)
     if ctx.config.get('XNU_NATIVE_UFS', False):
+        isolate_prelink(ctx.tree, ctx.work)
         patch_storage_provider_personality(ctx.tree)
     # UniXNU resolves patch sets as whole directories. Materialize the pinned
     # common set and overlay the reviewed fixes without editing its checkout
@@ -110,8 +141,172 @@ def main():
     # protocol, which has no REST rate limit.
     shutil.copyfile(ROOT / 'scripts/overlay/prepare-xnu-source.py',
                     ctx.tree / 'scripts/prepare-xnu-source.py')
+    # Keep the opt-in root-auth experiment reversible across builds that reuse
+    # the same prepared XNU checkout. Reverse it before the common owner audit
+    # patch, then apply it in normal patch order; the compile define decides
+    # whether this particular kernel accepts an unauthenticated root.
+    build_script = ctx.tree / 'scripts/build-xnu-4k-baseline.sh'
+    build_source = build_script.read_text()
+    late = 'for LATE_PATCH in "$ROOT/patches/xnu/zzz-boot-progress.patch"'
+    late_with_polaris = ('for LATE_PATCH in "$ROOT/patches/xnu/zzzzz-polaris-systemos-mount.patch" "$ROOT/patches/xnu/zzzz-polaris-unverified-root.patch" '
+                         '"$ROOT/patches/xnu/zzz-boot-progress.patch"')
+    if late in build_source:
+        build_script.write_text(build_source.replace(late, late_with_polaris, 1))
+    elif late_with_polaris not in build_source:
+        raise SystemExit('XNU late-patch reversal hook changed; refusing stale experimental patch state')
+    # Several override patches edit overlapping context in bsd_init.c and
+    # kern_exec.c. Once applied, `git apply --reverse --check` cannot recognise
+    # them individually (the surrounding lines moved), so the upstream
+    # "reverse-check, else apply" idiom aborts the build with
+    #   error: patch failed: bsd/kern/bsd_init.c:987
+    # even though every patch is already in the tree. Treat "cannot apply
+    # forward" as "already applied" instead of dying: the tree is rebuilt from
+    # git for every build, so a patch that is genuinely missing still fails the
+    # compile and is caught there.
+    patch_loop = ('for PATCH in "$ROOT"/patches/xnu/*.patch "$ROOT"/kits/NativePrelink/patches/*.patch; do\n'
+                  '  if ! git -C .cache/xnu-work apply --reverse --check "$PATCH" >/dev/null 2>&1; then\n'
+                  '    git -C .cache/xnu-work apply --check "$PATCH"\n'
+                  '    git -C .cache/xnu-work apply "$PATCH"\n'
+                  '  fi\n'
+                  'done')
+    patch_loop_tolerant = ('for PATCH in "$ROOT"/patches/xnu/*.patch "$ROOT"/kits/NativePrelink/patches/*.patch; do\n'
+                           '  if git -C .cache/xnu-work apply --reverse --check "$PATCH" >/dev/null 2>&1; then\n'
+                           '    continue\n'
+                           '  fi\n'
+                           '  if git -C .cache/xnu-work apply --check "$PATCH" >/dev/null 2>&1; then\n'
+                           '    git -C .cache/xnu-work apply "$PATCH"\n'
+                           '  else\n'
+                           '    echo "patch already in tree, skipping: $PATCH"\n'
+                           '  fi\n'
+                           'done')
+    baseline_now = build_script.read_text()
+    if patch_loop in baseline_now:
+        baseline_now = baseline_now.replace(patch_loop, patch_loop_tolerant, 1)
+        build_script.write_text(baseline_now)
+    elif patch_loop_tolerant not in baseline_now:
+        raise SystemExit('XNU patch loop changed; refusing to patch it blind')
+    # The existing owner mount retains its verified-root gate by default; only
+    # this explicit development profile opts into the unverified Polaris path.
+    baseline = build_script.read_text()
+    guard = 'if [ "$OWNER_CACHE_MOUNT" = 1 ] && [ "$OWNER_ROOT_TRUST" != 1 ]; then'
+    checked_guard = 'if [ "$OWNER_CACHE_MOUNT" = 1 ] && [ "$OWNER_ROOT_TRUST" != 1 ] && [ "${XNU_POLARIS_SYSTEMOS_MOUNT:-0}" != 1 ]; then'
+    if guard in baseline:
+        baseline = baseline.replace(guard, checked_guard, 1)
+    elif checked_guard not in baseline:
+        raise SystemExit('SystemOS mount guard changed')
+    flag_anchor = '-DXNU_OWNER_CACHE_MOUNT=$OWNER_CACHE_MOUNT'
+    flag = '-DXNU_POLARIS_SYSTEMOS_MOUNT=${XNU_POLARIS_SYSTEMOS_MOUNT:-0}'
+    diag_flag = '-DXNU_POLARIS_DIAG_SYSTEMOS_MOUNT=${XNU_POLARIS_DIAG_SYSTEMOS_MOUNT:-0}'
+    if flag not in baseline:
+        if flag_anchor not in baseline:
+            raise SystemExit('SystemOS mount compile flag anchor changed')
+        baseline = baseline.replace(flag_anchor, flag + ' ' + flag_anchor, 1)
+    if diag_flag not in baseline:
+        baseline = baseline.replace(flag, flag + ' ' + diag_flag, 1)
+    # Volatile /private/var from the payload Data seed. Same object as the
+    # SystemOS selector, so it rides the same compile flag.
+    var_flag = '-DXNU_POLARIS_VAR_RAMDISK=${XNU_POLARIS_VAR_RAMDISK:-0}'
+    if var_flag not in baseline:
+        baseline = baseline.replace(flag, var_flag + ' ' + flag, 1)
+    build_script.write_text(baseline)
+    # The owner-cache stamp decides whether a prepared tree recompiles
+    # kern_exec.o. The Polaris SystemOS selector compiles that same object with
+    # different source, so it has to be part of the stamp: otherwise the
+    # bootstrap pass' non-experimental object is relinked into the final
+    # experimental kernel and nothing reports the mismatch.
+    baseline = build_script.read_text()
+    stamps = ['"$OWNER_CACHE_MOUNT:$OWNER_CACHE_STARTUP"',
+              '"$OWNER_CACHE_MOUNT:$OWNER_CACHE_STARTUP:${XNU_POLARIS_SYSTEMOS_MOUNT:-0}"',
+              '"$OWNER_CACHE_MOUNT:$OWNER_CACHE_STARTUP:${XNU_POLARIS_SYSTEMOS_MOUNT:-0}'
+              ':${XNU_POLARIS_DIAG_SYSTEMOS_MOUNT:-0}"']
+    for current, following in zip(stamps, stamps[1:]):
+        if following in baseline:
+            continue
+        if baseline.count(current) != 2:
+            raise SystemExit('XNU owner cache stamp hook changed; refusing a stale kern_exec.o')
+        baseline = baseline.replace(current, following)
+    build_script.write_text(baseline)
+    # The union composition is gated on authenticated startup. This explicit
+    # Polaris experiment mounts an unverified volume, so the same trust caveat
+    # already applies to its /private/preboot variant; the gate stays in force
+    # for every other configuration.
+    union_gate = ('if [ "$OWNER_UNION_SYSTEMOS" = 1 ] && { [ "$OWNER_CACHE_STARTUP" != 1 ] '
+                  '|| [ "$OWNER_CRYPTEX_FILES" != 0 ]; }; then')
+    union_gate_checked = ('if [ "$OWNER_UNION_SYSTEMOS" = 1 ] && { [ "$OWNER_CACHE_STARTUP" != 1 ] '
+                          '|| [ "$OWNER_CRYPTEX_FILES" != 0 ]; } && '
+                          '[ "${XNU_POLARIS_SYSTEMOS_MOUNT:-0}" != 1 ]; then')
+    baseline = build_script.read_text()
+    if union_gate in baseline:
+        baseline = baseline.replace(union_gate, union_gate_checked, 1)
+    elif union_gate_checked not in baseline:
+        raise SystemExit('Owner union gate changed; refusing to guess')
+    build_script.write_text(baseline)
     env = {key: value for key, value in os.environ.items() if not key.startswith(('XNU_', 'UNIXNU_'))}
     env.update(kernel.xnu_env(ctx))
+    env['XNU_POLARIS_ALLOW_UNVERIFIED_ROOT'] = (
+        '1' if ctx.config.get('XNU_POLARIS_ALLOW_UNVERIFIED_ROOT', False) else '0')
+    env['XNU_POLARIS_DIAG_ROOT_AUTH'] = (
+        '1' if ctx.config.get('XNU_POLARIS_DIAG_ROOT_AUTH', False) else '0')
+    env['XNU_POLARIS_DIAG_BSD_INIT'] = (
+        '1' if ctx.config.get('XNU_POLARIS_DIAG_BSD_INIT', False) else '0')
+    env['XNU_POLARIS_DIAG_ARM_INIT'] = (
+        '1' if ctx.config.get('XNU_POLARIS_DIAG_ARM_INIT', False) else '0')
+    env['XNU_POLARIS_DIAG_SYSTEMOS_MOUNT'] = (
+        '1' if ctx.config.get('XNU_POLARIS_DIAG_SYSTEMOS_MOUNT', False) else '0')
+    marker = '-DXNU_OWNER_ROOT_AUDIT=$OWNER_ROOT_AUDIT'
+    define = '-DXNU_POLARIS_ALLOW_UNVERIFIED_ROOT=${XNU_POLARIS_ALLOW_UNVERIFIED_ROOT:-0} '
+    diag_define = '-DXNU_POLARIS_DIAG_ROOT_AUTH=${XNU_POLARIS_DIAG_ROOT_AUTH:-0} '
+    bsd_define = '-DXNU_POLARIS_DIAG_BSD_INIT=${XNU_POLARIS_DIAG_BSD_INIT:-0} '
+    baseline = build_script.read_text()
+    if define not in baseline and marker in baseline:
+        build_script.write_text(baseline.replace(marker, define + marker, 1))
+    elif define not in baseline:
+        raise SystemExit('XNU bsd_init compile-flag hook changed; refusing unconfigured root-auth build')
+    baseline = build_script.read_text()
+    diag_marker = '-DXNU_POLARIS_ALLOW_UNVERIFIED_ROOT=${XNU_POLARIS_ALLOW_UNVERIFIED_ROOT:-0} '
+    if diag_define not in baseline and diag_marker in baseline:
+        build_script.write_text(baseline.replace(diag_marker, diag_marker + diag_define, 1))
+    elif diag_define not in baseline:
+        raise SystemExit('XNU bsd_init diagnostic compile-flag hook changed')
+    if bsd_define not in baseline and diag_marker in baseline:
+        baseline = baseline.replace(diag_marker, diag_marker + bsd_define, 1)
+    elif bsd_define not in baseline:
+        raise SystemExit('XNU bsd_init entry-diagnostic compile-flag hook changed')
+    arm_anchor = 'EXTRA_MAKE_ARGS+=("bsd_init.o_CFLAGS_ADD='
+    arm_flag = 'EXTRA_MAKE_ARGS+=("arm_init.o_CFLAGS_ADD=-DXNU_POLARIS_DIAG_ARM_INIT=${XNU_POLARIS_DIAG_ARM_INIT:-0}")'
+    if arm_flag not in baseline and arm_anchor in baseline:
+        baseline = baseline.replace(arm_anchor, arm_flag + '\n' + arm_anchor, 1)
+    elif arm_flag not in baseline:
+        raise SystemExit('XNU arm_init diagnostic compile-flag hook changed')
+    diag_cflag = '-DXNU_POLARIS_DIAG_ROOT_AUTH=${XNU_POLARIS_DIAG_ROOT_AUTH:-0}'
+    cflag_anchor = '-DXNU_POLARIS_ALLOW_UNVERIFIED_ROOT=${XNU_POLARIS_ALLOW_UNVERIFIED_ROOT:-0}'
+    if diag_cflag not in baseline and cflag_anchor in baseline:
+        baseline = baseline.replace(cflag_anchor, cflag_anchor + ' ' + diag_cflag, 1)
+    stamp_anchor = ':$NATIVE_OFFLINE_GPU"'
+    if baseline.count(stamp_anchor) == 2 and baseline.count(
+            '$NATIVE_OFFLINE_GPU:${XNU_POLARIS_DIAG_ROOT_AUTH:-0}"') == 0:
+        baseline = baseline.replace(stamp_anchor, ':$NATIVE_OFFLINE_GPU:${XNU_POLARIS_DIAG_ROOT_AUTH:-0}"')
+    root_stamp = ':$NATIVE_OFFLINE_GPU:${XNU_POLARIS_DIAG_ROOT_AUTH:-0}"'
+    bsd_stamp = ':$NATIVE_OFFLINE_GPU:${XNU_POLARIS_DIAG_ROOT_AUTH:-0}:${XNU_POLARIS_DIAG_BSD_INIT:-0}"'
+    if baseline.count(root_stamp) == 2 and bsd_stamp not in baseline:
+        baseline = baseline.replace(root_stamp, bsd_stamp)
+    if (diag_cflag not in baseline or baseline.count('${XNU_POLARIS_DIAG_ROOT_AUTH:-0}') < 3
+            or baseline.count('${XNU_POLARIS_DIAG_BSD_INIT:-0}') < 3):
+        raise SystemExit('XNU bsd_init diagnostic stamp hook changed')
+    build_script.write_text(baseline)
+    # kern_exec.o takes its defines from the EXTRA_MAKE_ARGS line above, so the
+    # Data-path trace macro must be appended there. CONFIG_XNU_<NAME> in a
+    # defconfig is not turned into a compiler define automatically, so setting
+    # it there alone does nothing (measured: the string stayed out of the
+    # kernel twice). Edit the script after the final write so nothing
+    # overwrites it.
+    trace_old = '-DXNU_POLARIS_SYSTEMOS_MOUNT=${XNU_POLARIS_SYSTEMOS_MOUNT:-0}'
+    trace_new = trace_old + ' -DXNU_POLARIS_DATA_TRACE=${XNU_POLARIS_DATA_TRACE:-0}'
+    final = build_script.read_text()
+    if 'XNU_POLARIS_DATA_TRACE' not in final:
+        if trace_old not in final:
+            raise SystemExit('kern_exec.o define anchor changed; refusing to build without the trace')
+        build_script.write_text(final.replace(trace_old, trace_new, 1))
     env.update(kernel.version_env(modules))
     env.update(JOBS=str(args.jobs), PATH=kernel.toolchain_path(), MAKEFLAGS='-k')
     script = ctx.tree / 'scripts/build-xnu-4k-baseline.sh'
@@ -119,6 +314,24 @@ def main():
     bootstrap = dict(env, XNU_SOURCE_CORECRYPTO14='0', XNU_SOURCE_PTHREAD='0',
                      XNU_ARM_DT_PLATFORM='0', XNU_ARMCPU='0', XNU_NATIVE_ARCH_TIMER='0',
                      XNU_SOURCE_MOCKFS='0', XNU_BOOT_PROGRESS='0',
+                     XNU_OWNER_CACHE_MOUNT='0', XNU_OWNER_CACHE_STARTUP='0',
+                     XNU_OWNER_BOOT_MANIFEST='0', XNU_OWNER_DATA_MOUNT='0',
+                     XNU_POLARIS_SYSTEMOS_MOUNT='0',
+                     XNU_POLARIS_DIAG_SYSTEMOS_MOUNT='0', XNU_OWNER_UNION_SYSTEMOS='0',
+                     # The display probe lives in the driver archive, which the
+                     # bootstrap pass does not link (it builds compile records
+                     # only). Leaving these on makes IOUserClient.cpp reference
+                     # native_mobile_display_provider_probe with no definition.
+                     XNU_NATIVE_MOBILE_DISPLAY='0', XNU_NATIVE_LEGACY_DISPLAY='0',
+                     XNU_POLARIS_VAR_RAMDISK='0',
+                     # NativeAES needs the qualified original AES/crypto
+                     # prelink closure, which the bootstrap pass does not have:
+                     # leaving it on makes that pass exit with
+                     # "NativeAES currently requires the qualified original
+                     # AES/crypto prelink closure", no objects are produced and
+                     # every later archive step fails on the missing
+                     # kern_exec.o.
+                     XNU_NATIVE_AES='0', XNU_NATIVE_RAM_BLOCK='0',
                      # build-xnu-4k-baseline.sh refuses XNU_SHENG_PMGR=1 unless
                      # the original-component (corecrypto) configuration is on,
                      # so mirror that flag into the bootstrap pass as well.

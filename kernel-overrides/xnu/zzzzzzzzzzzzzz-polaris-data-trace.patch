@@ -1,0 +1,31 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7631,6 +7631,28 @@
+ 	boot_progress_stage("Data mount enter");
+ 	int data_error = native_owner_data_prepare(p, (user_addr_t)scratch_addr);
+ 	boot_progress_stage("Data mount returned");
++#if defined(XNU_POLARIS_DATA_TRACE) && XNU_POLARIS_DATA_TRACE
++	/*
++	 * Runs after the Data mount attempt. The previous build proved the earlier
++	 * half: NativeRamBlock binds the seed (rdy=1, bytes=0x20000000, rd=29,
++	 * fail=0, res=991232) and memory is healthy, yet native_owner_data_prepare
++	 * had not run when the probe fired. This reports its real outcome.
++	 */
++	{
++		extern volatile int native_owner_data_stage;
++		extern volatile int native_owner_data_status;
++		extern volatile int native_owner_data_readonly;
++		extern uint64_t native_owner_data_seed_size;
++		extern volatile int native_ram_block_ready;
++		extern volatile uint64_t native_ram_block_bytes;
++		extern volatile uint64_t native_ram_block_resident_bytes;
++		panic("POLARIS POST dstage=%d err=%d dstat=%d ro=%d seed=%llx rdy=%d bytes=%llx res=%llu",
++		    native_owner_data_stage, data_error, native_owner_data_status,
++		    native_owner_data_readonly, native_owner_data_seed_size,
++		    native_ram_block_ready, native_ram_block_bytes,
++		    native_ram_block_resident_bytes);
++	}
++#endif
+ 	if (data_error) panic("offline scratch Data mount failed: %d", data_error);
+ #if defined(XNU_BOOT_PROGRESS) && XNU_BOOT_PROGRESS
+ 	extern int sheng_boot_watchdog_policy(void *, uint64_t);

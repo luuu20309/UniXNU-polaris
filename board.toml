@@ -16,6 +16,17 @@ archives = [
   "build-arm-driver.py ArmDTPlatform",
   "build-arm-driver.py ArmCpu",
   "build-arm-driver.py NativeUfs",
+  # Mobile display: NativeGOPPresenter takes over the UEFI GOP framebuffer and
+  # publishes an IOMobileFramebuffer, which is what a userspace window server
+  # needs before it can find a CADisplay. NativeLegacyDisplay is deliberately
+  # not built: it subclasses IOMobileFramebufferLegacy, whose header is not in
+  # the open XNU tree.
+  "build-arm-driver.py NativeMobileDisplay",
+  # NativeAES binds the source AES subclass to the measured original methods.
+  # NativeRamBlock requires it (build-xnu-4k-baseline.sh:176-181), and the Data
+  # volume mount requires NativeRamBlock: APFS refuses /dev/md0 with ENOENT, as
+  # alioth measured on hardware ("offline scratch Data mount failed: 2").
+  "build-native-aes-bindings.py",
   "build-libpthread-kernel.py",
   "build-mockfs-fixture.py",
 ]
@@ -72,6 +83,9 @@ kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_BCM2837/mach.development.bcm2837.u
 slide = "-0x1000000"
 early_security_init = "com.apple.driver.AppleMobileFileIntegrity=0xfffffff005ab4ae0"
 roots = [
+  # iPadOS launchd on the target root uses decmpfs type 4; this original
+  # component registers its decompressor at root stage.
+  "com.apple.AppleFSCompression.AppleFSCompressionTypeZlib",
   "com.apple.kec.corecrypto",
   "com.apple.driver.AppleARMPlatform",
   "com.apple.filesystems.apfs",
@@ -82,4 +96,9 @@ roots = [
   "com.apple.iokit.IOStorageFamily",
   "com.apple.iokit.IOSurface",
   "com.apple.iokit.IOHIDFamily",
+  # Touch needs the event driver too, not just the family: without it the
+  # Digitizer/Touch Screen personality never matches and a published device
+  # stays silent (sirius porting.toml:387 hit exactly this). alioth and uke
+  # prelink both names; polaris only had the family.
+  "com.apple.iokit.IOHIDEventDriver",
 ]

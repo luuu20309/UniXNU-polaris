@@ -1,0 +1,32 @@
+--- a/osfmk/arm/arm_init.c
++++ b/osfmk/arm/arm_init.c
+@@ -375,2 +375,5 @@ arm_init(
+ 	PE_init_platform(FALSE, args); /* Get platform expert set up */
++#if defined(XNU_POLARIS_DIAG_ARM_INIT) && XNU_POLARIS_DIAG_ARM_INIT
++	panic("POLARIS DIAG: PE_init_platform returned");
++#endif
+ 	boot_progress_init();
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -568,4 +568,7 @@ bsd_init(void)
+ {
++#if defined(XNU_POLARIS_DIAG_BSD_INIT) && XNU_POLARIS_DIAG_BSD_INIT
++	panic("POLARIS DIAG: entered bsd_init");
++#endif
+ 	boot_progress_stage("bsd_init enter");
+ 	struct uthread *ut;
+ 	vnode_t init_rootvnode = NULLVP;
+@@ -1097,6 +1097,13 @@ bsd_init(void)
+ 			}
+ #endif
+ 			if (autherr && !owner_authorized) {
++#if defined(XNU_POLARIS_ALLOW_UNVERIFIED_ROOT) && XNU_POLARIS_ALLOW_UNVERIFIED_ROOT
++				printf("WARNING: polaris experimental boot accepts unauthenticated root (autherr=%d)\n", autherr);
++#if defined(XNU_POLARIS_DIAG_ROOT_AUTH) && XNU_POLARIS_DIAG_ROOT_AUTH
++				panic("POLARIS DIAG: unverified-root bypass reached");
++#endif
++#else
+ 				panic("rootvp not authenticated after mounting");
++#endif
+ 			}
+ #if defined(XNU_OWNER_ROOT_TRUST) && XNU_OWNER_ROOT_TRUST

@@ -1,0 +1,27 @@
+--- a/bsd/vm/vm_unix.c
++++ b/bsd/vm/vm_unix.c
+@@ -2973,6 +2973,14 @@
+ 	files_count = uap->files_count;
+ 	mappings_count = uap->mappings_count;
+ 
++	/* Polaris bring-up probe, inert unless the boot argument asks for it. */
++	extern boolean_t PE_parse_boot_argn(const char *, void *, int);
++	int polaris_srmap = 0;
++	(void)PE_parse_boot_argn("polaris-srmap", &polaris_srmap, sizeof(polaris_srmap));
++	if (polaris_srmap == 1 && proc_getpid(p) == 1) {
++		panic("POLARIS SRMAP ENTER files=%u maps=%u", files_count, mappings_count);
++	}
++
+ 	if (files_count == 0) {
+ 		SHARED_REGION_TRACE_INFO(
+ 			("shared_region: %p [%d(%s)] map(): "
+@@ -3077,6 +3085,9 @@
+ 
+ 	kr = _shared_region_map_and_slide(p, files_count, shared_files, mappings_count, mappings);
+ done:
++	if (kr != KERN_SUCCESS && polaris_srmap == 2 && proc_getpid(p) == 1) {
++		panic("POLARIS SRMAP FAIL kr=%d files=%u maps=%u", (int)kr, files_count, mappings_count);
++	}
+ 	kfree_data(shared_files, files_count * sizeof(shared_files[0]));
+ 	kfree_data(mappings, mappings_count * sizeof(mappings[0]));
+ 	return kr;

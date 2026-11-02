@@ -1,0 +1,99 @@
+# Experimental iPadOS 17 root attempt for polaris (SDM845), dyld-focused.
+# Same composition as polaris_ipados17_systemos_union_defconfig, plus the
+# 4K-page code-signing hash cache.
+#
+# Why the hash cache: the dyld shared cache is signed with 16 KiB page hashes
+# (CodeDirectory pageSize = 14), while this kernel is a 4 KiB page build
+# (PAGE_SHIFT = 12). cs_validate_codedirectory() rejects any page shift that is
+# neither PAGE_SHIFT_4K nor PAGE_SHIFT and returns EBADEXEC, which makes
+# ubc_cs_blob_add() fail and leaves dyld convinced there is no cache at all.
+# XNU_NATIVE_CS_HASH_CACHE compiles in cs_native4k_prepare(), which derives a
+# 4 KiB granular hash cache from the signed 16 KiB hashes so those signatures
+# can be accepted and pages validated on a 4 KiB kernel.
+#
+# This profile deliberately permits an unverified root volume to pass XNU's
+# root-auth gate so bring-up can continue to userspace diagnostics. It removes
+# the sealed-root guarantee; use only with the local test image.
+CONFIG_XNU_BUILD_ARCHIVES=y
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_SOURCE_PTHREAD=y
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_NATIVE_ARCH_TIMER=y
+CONFIG_XNU_NATIVE_PAN=y
+CONFIG_XNU_TRUST_CACHE_RUNTIME=y
+CONFIG_XNU_SOURCE_MOCKFS=y
+CONFIG_XNU_DT_PANIC_REGION=y
+CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
+CONFIG_XNU_NATIVE_UFS=y
+CONFIG_XNU_SHENG_PMGR=y
+CONFIG_XNU_NATIVE_ADRENO=n
+# NativeMobileDisplay publishes IOMobileFramebuffer from the UEFI GOP
+# framebuffer. NativeLegacyDisplay stays off: it subclasses
+# IOMobileFramebufferLegacy, whose header is not in the open XNU tree, so that
+# source is not part of this build.
+CONFIG_XNU_NATIVE_MOBILE_DISPLAY=y
+CONFIG_XNU_NATIVE_LEGACY_DISPLAY=n
+CONFIG_XNU_ARMVIRT_PLATFORM=n
+CONFIG_XNU_POLARIS_ALLOW_UNVERIFIED_ROOT=y
+
+# Experimental unverified read-only SystemOS mount; no authenticity claim.
+CONFIG_XNU_POLARIS_SYSTEMOS_MOUNT=y
+CONFIG_XNU_OWNER_CACHE_MOUNT=y
+CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
+
+# Accept 16 KiB-hashed code signatures (the dyld shared cache) on a 4 KiB
+# kernel by deriving 4 KiB hashes from them.
+CONFIG_XNU_NATIVE_CS_HASH_CACHE=y
+
+# Diagnostic stop that reports the resolved device, readonly flag and dyld
+# cache visibility on the panic screen. Deliberately halts; not for normal boot.
+CONFIG_XNU_POLARIS_DIAG_SYSTEMOS_MOUNT=y
+
+# Mount the payload Data seed read-write on /private/var so tzinit can create
+# its timezone symlink. The seed is RAM: nothing persists, and the mount is not
+# presented as an authenticated owner Data volume.
+CONFIG_XNU_POLARIS_VAR_RAMDISK=y
+
+# --- Writable /private/var (tzinit needs /var/db/timezone to accept a symlink) ---
+#
+# Three independent hardware-verified facts force this exact combination:
+#
+# 1. APFS will not mount /dev/md0. alioth measured on hardware 2026-10-26:
+#    "offline scratch Data mount failed: 2 - APFS refuses to mount /dev/md0
+#    with ENOENT". /dev/md0 is the flat mdevadd() RAM disk built from
+#    /chosen/memory-map/RAMDisk, and APFS only accepts a real IOMedia.
+#
+# 2. So the Data volume must arrive through NativeRamBlock, which publishes an
+#    IOMedia with the seed's APFS volume UUID; the kernel then looks the device
+#    up by UUID instead of by name.
+#
+# 3. NativeRamBlock requires NativeAES (build-xnu-4k-baseline.sh:176-181), and
+#    NativeAES requires the prelinked source-corecrypto closure (:155-158).
+#    Both are already satisfied on this board.
+#
+# The seed's APFS volume UUID is f3be3c97-a6d4-4d5a-8493-baa86fb38845 (read from
+# the 512 MiB Data container built from this image's /private/var). It must match
+# byte for byte; a stale UUID makes the kernel look for a device that will never
+# appear and the mount fails with ENOENT again.
+# Sizing note (measured on hardware 2026-11-03): NativeRamBlock keeps a
+# uint8_t* per 4 KiB page (SparseDisk.h:7), and the seed is expanded into
+# owned memory. A 2 GiB seed needs a 4 MiB pointer array plus the pages, and on
+# this board it drove free memory from 0x32704 pages (807 MiB) to 0x5ce
+# (5.8 MiB) and aborted in ctid_get_thread_unsafe. 512 MiB needs a 1 MiB array
+# and leaves the machine room to boot.
+CONFIG_XNU_NATIVE_AES=y
+CONFIG_XNU_NATIVE_RAM_BLOCK=y
+CONFIG_XNU_OWNER_DATA_MOUNT=y
+CONFIG_XNU_OWNER_DATA_VOLUME_UUID="f3be3c97-a6d4-4d5a-8493-baa86fb38845"
+# OWNER_DATA_MOUNT is gated on the authenticated owner chain
+# (DATA_MOUNT -> BOOT_MANIFEST -> CACHE_STARTUP -> CACHE_MOUNT). This board has no
+# owner policy bundle, so the chain cannot be satisfied; the build-side gate is
+# relaxed the same way uke does it (a one-line patch that reports the same
+# relaxation explicitly).
+CONFIG_XNU_OWNER_BOOT_MANIFEST=y
+CONFIG_XNU_OWNER_CACHE_STARTUP=y
+
+# Prints the Data path stage (1 seed resolved .. 4 verified writable apfs)
+# together with the NativeRamBlock counters before the mount is attempted.
+CONFIG_XNU_POLARIS_DATA_TRACE=y

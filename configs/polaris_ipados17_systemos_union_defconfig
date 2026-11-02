@@ -1,0 +1,30 @@
+# Experimental iPadOS 17 root attempt for polaris (SDM845).
+# This profile deliberately permits an unverified root volume to pass
+# XNU's root-auth gate so bring-up can continue to userspace diagnostics.
+# It removes the sealed-root guarantee; use only with the local test image.
+CONFIG_XNU_BUILD_ARCHIVES=y
+CONFIG_XNU_SOURCE_CORECRYPTO14=y
+CONFIG_XNU_SOURCE_PTHREAD=y
+CONFIG_XNU_ARM_DT_PLATFORM=y
+CONFIG_XNU_ARMCPU=y
+CONFIG_XNU_NATIVE_ARCH_TIMER=y
+CONFIG_XNU_NATIVE_PAN=y
+CONFIG_XNU_TRUST_CACHE_RUNTIME=y
+CONFIG_XNU_SOURCE_MOCKFS=y
+CONFIG_XNU_DT_PANIC_REGION=y
+CONFIG_XNU_CRYPTO_BOOTSTRAP="prelinked"
+CONFIG_XNU_NATIVE_UFS=y
+CONFIG_XNU_SHENG_PMGR=y
+CONFIG_XNU_NATIVE_ADRENO=n
+CONFIG_XNU_NATIVE_LEGACY_DISPLAY=n
+CONFIG_XNU_ARMVIRT_PLATFORM=n
+CONFIG_XNU_POLARIS_ALLOW_UNVERIFIED_ROOT=y
+
+# Experimental unverified read-only SystemOS mount; no authenticity claim.
+CONFIG_XNU_POLARIS_SYSTEMOS_MOUNT=y
+CONFIG_XNU_OWNER_CACHE_MOUNT=y
+CONFIG_XNU_OWNER_UNION_SYSTEMOS=y
+
+# Diagnostic stop that reports the resolved device, readonly flag and dyld
+# cache visibility on the panic screen. Deliberately halts; not for normal boot.
+CONFIG_XNU_POLARIS_DIAG_SYSTEMOS_MOUNT=y

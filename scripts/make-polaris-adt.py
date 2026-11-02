@@ -53,6 +53,19 @@ PROTECTED_DATA_ACCESS = 0
 # panics "Failed to mount root device". Cross-checked against UniXNU's sheng
 # device record, which pins the same value for this image.
 ROOT_VOLUME_UUID = '04769D26-2CA0-4825-B443-E2E5F88300F2'
+# /sbin/mount reads this from IODeviceTree:/chosen with
+# IORegistryEntryCreateCFProperty and exits 66 (EX_NOINPUT) when it is absent:
+#   "failed to get boot-manifest-hash"          (0x100004d88, returns ENOENT)
+#   "failed to get boot manifest hash - %s"     (0x100006ba0, then _errx)
+# sysexit_np(ENOENT) is 66, which is what launchd reports for mount-phase-1.
+# Verified in the retail iPadOS 17.7.11 /sbin/mount (sha256 f7f7aa9b...).
+#
+# XNU accepts up to CCSHA384_OUTPUT_SIZE (48) bytes of raw digest, and this
+# board has no signed owner manifest, so the value is an explicit constant
+# rather than a computed identity. Anything 48 bytes or shorter is accepted;
+# the directory /private/preboot/<HEX> that mount derives from it must match
+# whatever is placed in the root image.
+BOOT_MANIFEST_HASH = bytes.fromhex('a5' * 48)
 TIMEBASE = 19200000
 TIMER_INTID = 19
 # 4x Cortex-A55 (MPIDR 0x000..0x300) + 4x Cortex-A75 (0x400..0x700); SDM845
@@ -60,6 +73,17 @@ TIMER_INTID = 19
 SILVER_CORES = 4
 SILVER_HZ = 1804800000
 GOLD_HZ = 2803200000
+
+
+def boot_manifest_hash():
+    """Raw boot-manifest-hash digest for /chosen.
+
+    IOGetBootManifestHash() takes up to 48 bytes verbatim and /sbin/mount turns
+    the bytes into an uppercase hex string for /private/preboot/<HEX>, so the
+    value has to be stable across boots: the matching preboot directory is part
+    of the root image, not created at runtime.
+    """
+    return BOOT_MANIFEST_HASH
 
 
 def root_matching():
@@ -121,8 +145,41 @@ def empty_nvram_proxy():
             ('nvram-proxy-data', bytes(image))]
 
 
+def memory_map_placeholders(trust_cache, ramdisk):
+    """Zeroed DarwinBoot placeholders under /chosen/memory-map.
+
+    DarwinBoot requires a placeholder for every input it is handed and fails
+    with EFI_COMPROMISED_DATA when one is missing, so the Data ramdisk entry
+    must exist exactly when the payload carries a seed. TrustCache stays
+    independent of it.
+
+    The property name selects the delivery format, and DarwinBoot's AdtNode()
+    decides from it (KeepPacked at DarwinBoot.c:222):
+
+        RAMDisk        DarwinBoot expands DBRDISK1 in place (CopyRamdisk) and
+                       writes the *expanded* length to the ADT. Window-limited.
+        PackedRAMDisk  DarwinBoot copies the compressed bytes through and writes
+                       the *compressed* length; the consumer must decompress.
+
+    Verified on hardware 2026-11-03: with PackedRAMDisk the ADT received
+    size=0xf0050 (the 983120-byte DBRDISK1), the kernel's mdev built a device of
+    that size, and apfs mount returned ENOENT -- because the kernel has no
+    DBRDISK1 decompressor. With RAMDisk the ADT receives the expanded length
+    instead, which is what APFS needs, but the expanded bytes must fit the
+    DarwinBoot window (WINDOW_SIZE 256 MiB minus BLOCK_SIZE 2 MiB).
+
+    So this board must ship an *unpacked* seed and declare RAMDisk.
+    """
+    entries = []
+    if trust_cache:
+        entries.append(('TrustCache', u64(0, 0)))
+    if ramdisk:
+        entries.append(('PackedRAMDisk', u64(0, 0)))
+    return entries
+
+
 def build(*, cpu_count=1, dram_size=DRAM_SIZE_6, owned_memory_size=0x40000000,
-          seed=None, ipad_identity=False):
+          seed=None, ipad_identity=False, trust_cache=False, ramdisk=False):
     if cpu_count not in range(1, 9):
         raise ValueError('cpu count must be 1..8')
     if dram_size not in (DRAM_SIZE_6, DRAM_SIZE_8):
@@ -172,11 +229,32 @@ def build(*, cpu_count=1, dram_size=DRAM_SIZE_6, owned_memory_size=0x40000000,
             ('darwinboot-memory-range', u64(DRAM_BASE, dram_size)),
             ('crypto-hash-method', b'sha2-384\0'),
             ('root-matching', root_matching()),
+            ('boot-manifest-hash', boot_manifest_hash()),
+            # UniXNU's devicetree.py sets this whenever a seed is present and
+            # persistent_data is off: the Data volume lives in RAM. It tells the
+            # owner Data path not to expect a persistent store, so the seed is
+            # treated as scratch rather than as a durable installation.
+            # No ephemeral-storage: the Data volume arrives through
+            # NativeRamBlock as a real IOMedia and is mounted writable on
+            # /private/var. UniXNU's devicetree.py:328-329 writes
+            # ephemeral-storage only when persistent_data is off, and
+            # os_variant_uses_ephemeral_storage makes datamigrator skip every
+            # migration when it is present.
             *empty_nvram_proxy(),
-        ], [node('memory-map'), node('manifest-properties')]),
+        ], [node('memory-map', memory_map_placeholders(trust_cache, ramdisk)), node('manifest-properties')]),
         node('cpus', [('#address-cells', u32(1)), ('#size-cells', u32(0))], cpus),
         node('psci', [('compatible', b'arm,psci-1.0\0'), ('method', b'smc\0')]),
         node('defaults', [('sleep-disabled', u32(1))]), node('options'),
+        # APFS refuses to mount an unencrypted Data volume. Before raising
+        # "unencrypted data volume is not allowed" (apfs_vfsops.c:2276) the
+        # original driver looks up /filesystems/DoNotUseSEP and skips the check
+        # when the property merely exists, whatever its value. e5 hit exactly
+        # this on hardware (docs/devices/e5.md:268: round 62 adds only that ADT
+        # property, and APFS then advances from xid 6 to 246 with real writes),
+        # and the sagit port sets the same empty value (ios_sagit
+        # tools/project/build/bridge.py:239-240). Without it the Data mount
+        # cannot succeed no matter how the seed is built.
+        node('filesystems', [('DoNotUseSEP', b'')]),
         node('product', [('product-name', b'Mi MIX 2S\0'),
                          ('model', b'xiaomi,polaris\0')]),
         node('arm-io', [
@@ -231,13 +309,22 @@ def main():
     parser.add_argument('--psci-method', choices=['smc'], default='smc')
     parser.add_argument('--ipad-identity', action='store_true',
                         help='add the iPad7,1/J120 root identity used by the local iPadOS 17 image')
+    parser.add_argument('--data-ramdisk', type=Path, default=None,
+                        help='Data seed supplied to the payload; adds the zeroed '
+                             'DarwinBoot RAMDisk placeholder it requires')
+    parser.add_argument('--trust-cache', action='store_true',
+                        help='add the zeroed DarwinBoot TrustCache placeholder; requires a matching trust-cache payload')
     args = parser.parse_args()
+    if args.data_ramdisk is not None and not args.data_ramdisk.is_file():
+        parser.error(f'--data-ramdisk is not a file: {args.data_ramdisk}')
     try:
         regs = [int(value, 0) for value in args.cpu_regs.split(',')]
         if not regs or regs != [core << 8 for core in range(len(regs))]:
             raise ValueError('--cpu-regs must be the initial polaris affinity prefix')
         blob = build(cpu_count=len(regs), dram_size=DRAM_SIZE_6 if args.ram == 6 else DRAM_SIZE_8,
-                     owned_memory_size=args.owned_memory_size, ipad_identity=args.ipad_identity)
+                     owned_memory_size=args.owned_memory_size, ipad_identity=args.ipad_identity,
+                     trust_cache=args.trust_cache,
+                     ramdisk=args.data_ramdisk is not None)
     except ValueError as error:
         parser.error(str(error))
     args.output.parent.mkdir(parents=True, exist_ok=True)

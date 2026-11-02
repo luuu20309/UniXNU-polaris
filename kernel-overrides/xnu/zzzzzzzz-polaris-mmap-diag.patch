@@ -1,0 +1,34 @@
+--- a/bsd/kern/kern_mman.c
++++ b/bsd/kern/kern_mman.c
+@@ -969,6 +969,31 @@
+ 		fp_drop(p, fd, fp, 0);
+ 	}
+ 
++	/*
++	 * Polaris bring-up probe. Mode 1 reports PID 1 mappings of 64 MiB or
++	 * more, mode 2 reports any file-backed executable mapping. dyld maps
++	 * the shared cache stub with PROT_EXEC before mapping the whole cache,
++	 * so both the small preflight mapping and the large ones are visible.
++	 * Inert unless the polaris-mmap boot argument is set.
++	 */
++	if (p != PROC_NULL && proc_getpid(p) == 1) {
++		extern boolean_t PE_parse_boot_argn(const char *, void *, int);
++		static int polaris_mmap_probe = -1;
++		if (polaris_mmap_probe < 0) {
++			int probe_value = 0;
++			(void)PE_parse_boot_argn("polaris-mmap", &probe_value,
++			    sizeof(probe_value));
++			polaris_mmap_probe = probe_value;
++		}
++		if (polaris_mmap_probe == 1 && uap->len >= (64ULL << 20)) {
++			panic("POLARIS MMAP len=%llu err=%d fd=%d prot=%x",
++			    (unsigned long long)user_size, error, fd, prot);
++		} else if (polaris_mmap_probe >= 2 && fd >= 0 && (prot & 0x4)) {
++			panic("POLARIS MMAPX len=%llu err=%d fd=%d prot=%x",
++			    (unsigned long long)user_size, error, fd, prot);
++		}
++	}
++
+ 	KERNEL_DEBUG_CONSTANT((BSDDBG_CODE(DBG_BSD_SC_EXTENDED_INFO, SYS_mmap) | DBG_FUNC_NONE), fd, (uint32_t)(*retval), (uint32_t)user_size, error, 0);
+ #if XNU_TARGET_OS_OSX
+ 	KERNEL_DEBUG_CONSTANT((BSDDBG_CODE(DBG_BSD_SC_EXTENDED_INFO2, SYS_mmap) | DBG_FUNC_NONE), (uint32_t)(*retval >> 32), (uint32_t)(user_size >> 32),

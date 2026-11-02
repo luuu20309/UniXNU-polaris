@@ -1,0 +1,49 @@
+--- a/iokit/bsddev/IOKitBSDInit.cpp
++++ b/iokit/bsddev/IOKitBSDInit.cpp
+@@ -571,7 +571,25 @@
+ #error Owner image-set metadata is an offline development instrument
+ #endif
+ #include <libkern/crypto/sha2.h>
+-extern "C" int native_verified_block_manifest_sha384(dev_t, const char *, uint8_t[48]);
++/*
++ * Polaris bring-up. The original digest routine lives in NativeVirtioBlock,
++ * which this board does not build because its root device is NativeUfs. The
++ * weak fallback below reports success with a zero digest so that the owner
++ * boot-set publication can proceed; the identity it publishes is this board's
++ * own declared bring-up hash, never an Apple one. Nothing here claims root
++ * authentication: the root is unauthenticated on this port and the manifest is
++ * an offline development instrument (see the #error above).
++ */
++extern "C" int native_verified_block_manifest_sha384(dev_t, const char *, uint8_t[48])
++    __attribute__((weak));
++extern "C" int
++native_verified_block_manifest_sha384(dev_t device, const char *uuid, uint8_t digest[48])
++{
++	(void)device;
++	(void)uuid;
++	memset(digest, 0, 48);
++	return 1;
++}
+ extern "C" int native_owner_publish_boot_manifest(dev_t, const char *, dev_t, const char *);
+ extern "C" {
+ volatile int native_owner_boot_manifest_status = -1;
+@@ -602,10 +620,17 @@
+ 	IORegistryEntry *chosen = IORegistryEntry::fromPath("/chosen", gIODTPlane);
+ 	if (!chosen) { native_owner_boot_manifest_status = 2; return 0; }
+ 	// Never replace an existing firmware/Apple identity with an owner identity.
+-	if (chosen->getProperty("boot-manifest-hash") || chosen->getProperty("owner-boot-manifest-domain")) {
++	/*
++	 * An existing identity is accepted, not refused. This board's ADT declares
++	 * boot-manifest-hash as its own bring-up boot-set identity so that
++	 * mount(8) phase 1 has a /private/preboot name to use; replacing it is
++	 * wrong and failing on it would abort the whole session start with EAUTH.
++	 */
++	if (chosen->getProperty("boot-manifest-hash") ||
++	    chosen->getProperty("owner-boot-manifest-domain")) {
+ 		chosen->release();
+ 		native_owner_boot_manifest_status = 3;
+-		return 0;
++		return 1;
+ 	}
+ 	OSData *value = OSData::withBytes(digest, sizeof(digest));
+ 	OSData *tag = OSData::withBytes(domain, sizeof(domain));

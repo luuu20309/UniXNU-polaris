@@ -1,0 +1,26 @@
+--- a/bsd/kern/kern_exit.c
++++ b/bsd/kern/kern_exit.c
+@@ -1871,6 +1871,23 @@
+ 
+ 	sync(p, (void *)NULL, (int *)NULL);
+ 
++	/*
++	 * Polaris bring-up probe: a non-init boot task that dies is the only
++	 * signal this board produces, and it carries no path. Report the last file
++	 * the process tried to open so the failure names its own input.
++	 */
++	if (p != initproc) {
++		extern char polaris_last_open_path[128];
++		extern volatile int polaris_last_open_pid;
++		extern volatile int polaris_last_open_flags;
++		if (polaris_last_open_pid == proc_getpid(p) &&
++		    polaris_last_open_path[0] != '\0') {
++			panic("POLARIS LASTOPEN %s flags=%x (%s exit %d)",
++			    polaris_last_open_path, polaris_last_open_flags,
++			    prefix_str, WEXITSTATUS(rv));
++		}
++	}
++
+ 	if (p->p_exit_reason == OS_REASON_NULL) {
+ 		panic_with_options(0, NULL, DEBUGGER_OPTION_INITPROC_PANIC, "%s -- no exit reason available -- (signal %d, exit status %d %s)",
+ 		    prefix_str, WTERMSIG(rv), WEXITSTATUS(rv), ((proc_getcsflags(p) & CS_KILLED) ? "CS_KILLED" : ""));
