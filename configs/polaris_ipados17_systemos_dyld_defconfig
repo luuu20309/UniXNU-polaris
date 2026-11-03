@@ -85,7 +85,7 @@ CONFIG_XNU_POLARIS_VAR_RAMDISK=y
 CONFIG_XNU_NATIVE_AES=y
 CONFIG_XNU_NATIVE_RAM_BLOCK=y
 CONFIG_XNU_OWNER_DATA_MOUNT=y
-CONFIG_XNU_OWNER_DATA_VOLUME_UUID="f3be3c97-a6d4-4d5a-8493-baa86fb38845"
+CONFIG_XNU_OWNER_DATA_VOLUME_UUID="252af22a-d682-4100-bd96-80a8aad6ae23"
 # OWNER_DATA_MOUNT is gated on the authenticated owner chain
 # (DATA_MOUNT -> BOOT_MANIFEST -> CACHE_STARTUP -> CACHE_MOUNT). This board has no
 # owner policy bundle, so the chain cannot be satisfied; the build-side gate is
@@ -103,3 +103,8 @@ CONFIG_XNU_POLARIS_DATA_TRACE=y
 # ("Boot progress requires the audited UFS/owner-root, Virtio and
 # source-corecrypto build"), and this board has no Virtio.
 # The thread probe below does not need it.
+
+# Puts the kernel console on the panel instead of leaving every printf() in
+# msgbuf. This board boots through the GOP framebuffer, so the stock vcattach()
+# path skips initialize_screen() and only the panic renderer is visible.
+CONFIG_XNU_POLARIS_TEXT_CONSOLE=y

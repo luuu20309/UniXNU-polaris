@@ -244,7 +244,18 @@ def build(*, cpu_count=1, dram_size=DRAM_SIZE_6, owned_memory_size=0x40000000,
         ], [node('memory-map', memory_map_placeholders(trust_cache, ramdisk)), node('manifest-properties')]),
         node('cpus', [('#address-cells', u32(1)), ('#size-cells', u32(0))], cpus),
         node('psci', [('compatible', b'arm,psci-1.0\0'), ('method', b'smc\0')]),
-        node('defaults', [('sleep-disabled', u32(1))]), node('options'),
+        # Activate the in-core compressor. With CONFIG_FREEZE the kernel defaults
+        # to VM_PAGER_FREEZER_DEFAULT (0x8), which vm_pageout.c maps to
+        # compressor_is_present=TRUE but compressor_is_active=FALSE, so
+        # VM_DYNAMIC_PAGING_ENABLED() stays false: dirty anonymous pages are
+        # pushed onto vm_page_queue_throttled and never compressed, and the
+        # machine runs out of reclaimable memory instead of compressing.
+        # 0x2 is VM_PAGER_COMPRESSOR_NO_SWAP ("active in-core compressor only"),
+        # which is what a phone uses. hackios sets exactly this on polaris
+        # (xnuloader/loader.c:3300) with the note that leaving it alone makes the
+        # memory go twice as fast.
+        node('defaults', [('sleep-disabled', u32(1)),
+                          ('kern.vm_compressor', u32(2))]), node('options'),
         # APFS refuses to mount an unencrypted Data volume. Before raising
         # "unencrypted data volume is not allowed" (apfs_vfsops.c:2276) the
         # original driver looks up /filesystems/DoNotUseSEP and skips the check

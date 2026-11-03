@@ -1,0 +1,25 @@
+--- a/osfmk/console/video_console.c
++++ b/osfmk/console/video_console.c
+@@ -3065,6 +3065,22 @@
+ vcattach(void)
+ {
+ 	vm_initialized = TRUE;
++
++#if defined(XNU_POLARIS_TEXT_CONSOLE) && XNU_POLARIS_TEXT_CONSOLE
++	/*
++	 * Polaris bring-up: this board boots through the UEFI GOP framebuffer, so
++	 * gc_graphics_boot is TRUE and the block below skips initialize_screen().
++	 * Everything printf() writes then lands in msgbuf and is never painted,
++	 * which leaves the panic renderer as the only visible text channel.
++	 * Asking for the text screen unconditionally puts the kernel console on the
++	 * panel instead, so boot messages (including the "vm_compressor_mode" line)
++	 * become readable without a serial port.
++	 */
++	{
++		extern void initialize_screen(void *p, int op);
++		initialize_screen(NULL, kPETextScreen);
++	}
++#endif
+ 
+ #if defined(CONFIG_VC_PROGRESS_METER_SUPPORT)
+ 	const boot_args * bootargs  = (typeof(bootargs))PE_state.bootArgs;

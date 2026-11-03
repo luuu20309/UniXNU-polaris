@@ -325,7 +325,9 @@ def main():
                        'EXTRA_MAKE_ARGS+=("kern_fork.o_CFLAGS_ADD='
                        '-DXNU_POLARIS_EXEC_TRACE=${XNU_POLARIS_EXEC_TRACE:-0}")\n'
                        'EXTRA_MAKE_ARGS+=("compact_id.o_CFLAGS_ADD='
-                       '-DXNU_POLARIS_EXEC_TRACE=${XNU_POLARIS_EXEC_TRACE:-0}")\n')
+                       '-DXNU_POLARIS_EXEC_TRACE=${XNU_POLARIS_EXEC_TRACE:-0}")\n'
+                       'EXTRA_MAKE_ARGS+=("video_console.o_CFLAGS_ADD='
+                       '-DXNU_POLARIS_TEXT_CONSOLE=${XNU_POLARIS_TEXT_CONSOLE:-0}")\n')
         anchor_line = 'EXTRA_MAKE_ARGS+=("kern_exec.o_CFLAGS_ADD='
         pos = script_text.find(anchor_line)
         if pos < 0:
