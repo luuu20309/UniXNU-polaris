@@ -241,7 +241,14 @@ def main():
     elif union_gate_checked not in baseline:
         raise SystemExit('Owner union gate changed; refusing to guess')
     build_script.write_text(baseline)
-    env = {key: value for key, value in os.environ.items() if not key.startswith(('XNU_', 'UNIXNU_'))}
+    # XNU_* comes from the defconfig and the board record, never from the
+    # caller's environment, so it is filtered out here. Diagnostic probe macros
+    # are the exception: they are inert unless asked for, and the build needs
+    # them to reach both passes or the cached compile records disagree with the
+    # final pass. Allow only the probe macros through.
+    probe_passthrough = ('XNU_POLARIS_EXEC_TRACE', 'XNU_POLARIS_DATA_TRACE')
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith(('XNU_', 'UNIXNU_')) or key in probe_passthrough}
     env.update(kernel.xnu_env(ctx))
     env['XNU_POLARIS_ALLOW_UNVERIFIED_ROOT'] = (
         '1' if ctx.config.get('XNU_POLARIS_ALLOW_UNVERIFIED_ROOT', False) else '0')
@@ -301,12 +308,27 @@ def main():
     # kernel twice). Edit the script after the final write so nothing
     # overwrites it.
     trace_old = '-DXNU_POLARIS_SYSTEMOS_MOUNT=${XNU_POLARIS_SYSTEMOS_MOUNT:-0}'
-    trace_new = trace_old + ' -DXNU_POLARIS_DATA_TRACE=${XNU_POLARIS_DATA_TRACE:-0}'
+    trace_new = trace_old + ' -DXNU_POLARIS_DATA_TRACE=${XNU_POLARIS_DATA_TRACE:-0} -DXNU_POLARIS_EXEC_TRACE=${XNU_POLARIS_EXEC_TRACE:-0}'
+
     final = build_script.read_text()
     if 'XNU_POLARIS_DATA_TRACE' not in final:
         if trace_old not in final:
             raise SystemExit('kern_exec.o define anchor changed; refusing to build without the trace')
         build_script.write_text(final.replace(trace_old, trace_new, 1))
+    # The thread creation probe lives in osfmk/kern/thread.c. kern_exec.o_CFLAGS_ADD
+    # only reaches that one object, so thread.o gets its own define here.
+    script_text = build_script.read_text()
+    thread_marker = 'EXTRA_MAKE_ARGS+=("thread.o_CFLAGS_ADD='
+    if thread_marker not in script_text:
+        thread_line = ('EXTRA_MAKE_ARGS+=("thread.o_CFLAGS_ADD='
+                       '-DXNU_POLARIS_EXEC_TRACE=${XNU_POLARIS_EXEC_TRACE:-0}")\n')
+        anchor_line = 'EXTRA_MAKE_ARGS+=("kern_exec.o_CFLAGS_ADD='
+        pos = script_text.find(anchor_line)
+        if pos < 0:
+            raise SystemExit('kern_exec.o define anchor changed; cannot add thread.o define')
+        end = script_text.find('\n', pos)
+        script_text = script_text[:end + 1] + thread_line + script_text[end + 1:]
+        build_script.write_text(script_text)
     env.update(kernel.version_env(modules))
     env.update(JOBS=str(args.jobs), PATH=kernel.toolchain_path(), MAKEFLAGS='-k')
     script = ctx.tree / 'scripts/build-xnu-4k-baseline.sh'
@@ -332,18 +354,64 @@ def main():
                      # every later archive step fails on the missing
                      # kern_exec.o.
                      XNU_NATIVE_AES='0', XNU_NATIVE_RAM_BLOCK='0',
+                     # Diagnostic probes only change the code they guard, but the
+                     # bootstrap pass writes the compile records the final pass
+                     # reuses. If these are 0 there, thread.o keeps a record with
+                     # the probe compiled out even when the final pass asks for
+                     # it, and the probe silently disappears from the kernel.
+                     XNU_POLARIS_EXEC_TRACE=env.get('XNU_POLARIS_EXEC_TRACE', '0'),
+                     XNU_POLARIS_DATA_TRACE=env.get('XNU_POLARIS_DATA_TRACE', '0'),
                      # build-xnu-4k-baseline.sh refuses XNU_SHENG_PMGR=1 unless
                      # the original-component (corecrypto) configuration is on,
                      # so mirror that flag into the bootstrap pass as well.
                      XNU_SHENG_PMGR='0')
-    print('Bootstrap pass: compiling XNU records before external archives', flush=True)
-    bootstrap_failed = False
-    try:
-        run(['bash', script], cwd=ctx.tree, env=bootstrap, log_file=ctx.logs / 'bootstrap.log')
-    except Error:
-        bootstrap_failed = True
+    # Bootstrap reuse. The pass exists only to produce compile records and the
+    # source symbol inventory; its objects are discarded and the final link
+    # rebuilds everything with different defines. When the records are already
+    # present and the XNU source tree is untouched since they were written, the
+    # pass would reproduce byte-identical output, so it can be skipped. Set
+    # POLARIS_SKIP_BOOTSTRAP=0 to force a full pass.
     required = ['link.filelist', 'iokit/DEVELOPMENT/IOPlatformExpert.cpo.json',
                 'osfmk/DEVELOPMENT/prng_random.o.json', 'osfmk/DEVELOPMENT/startup.o.json']
+    records_present = all((obj / name).is_file() for name in required)
+    # The patch loop always leaves the tree dirty, so "status is clean" can
+    # never hold. What matters is whether the patched sources are the ones the
+    # records were produced from, so hash the tree state the patches produced.
+    import hashlib
+    xnu_root = ctx.tree / '.cache/xnu-work'
+    stamp = ctx.tree / 'build/xnu-records.stamp'
+    try:
+        digest = hashlib.sha256()
+        for patch in sorted((ctx.tree / 'patches/xnu').glob('*.patch')):
+            digest.update(patch.name.encode())
+            digest.update(patch.read_bytes())
+        for patch in sorted((ctx.tree / 'kernel-overrides/xnu').glob('*.patch')):
+            digest.update(patch.name.encode())
+            digest.update(patch.read_bytes())
+        for name in required:
+            path = obj / name
+            digest.update(hashlib.sha256(path.read_bytes()).hexdigest().encode() if path.is_file() else b'-')
+        want = digest.hexdigest()
+        have = stamp.read_text().strip() if stamp.is_file() else ''
+        sources_match = (have == want)
+        skip_bootstrap_ok = os.environ.get('POLARIS_SKIP_BOOTSTRAP', '1') != '0'
+    except OSError:
+        sources_match = False
+        skip_bootstrap_ok = False
+        want = ''
+    xnu_clean = sources_match
+    skip_bootstrap = skip_bootstrap_ok and records_present and xnu_clean
+    if skip_bootstrap:
+        print('Bootstrap pass: reusing existing XNU records (tree clean, set '
+              'POLARIS_SKIP_BOOTSTRAP=0 to force)', flush=True)
+    else:
+        print('Bootstrap pass: compiling XNU records before external archives', flush=True)
+    bootstrap_failed = False
+    if not skip_bootstrap:
+        try:
+            run(['bash', script], cwd=ctx.tree, env=bootstrap, log_file=ctx.logs / 'bootstrap.log')
+        except Error:
+            bootstrap_failed = True
     missing = [name for name in required if not (obj / name).is_file()]
     if missing:
         # The recursive make tail can hide the first generator failure behind
@@ -399,6 +467,14 @@ def main():
               'hardware_booted': False, 'userland_booted': False,
               'sources': {name: module.commit for (_, name), module in modules.items() if module.commit}}
     destination.with_suffix('.json').write_text(json.dumps(report, indent=2) + '\n')
+    # Record what the bootstrap records were produced from, so the next build can
+    # tell whether they are still valid for this patch set and kernel selection.
+    if want:
+        try:
+            stamp.parent.mkdir(parents=True, exist_ok=True)
+            stamp.write_text(want + '\n')
+        except OSError:
+            pass
     print(f'PASS: {"prelinked" if prelinked else "source"} kernel artifact '
           f'{destination}; no physical boot claimed')
 

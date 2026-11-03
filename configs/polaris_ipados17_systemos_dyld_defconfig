@@ -97,3 +97,9 @@ CONFIG_XNU_OWNER_CACHE_STARTUP=y
 # Prints the Data path stage (1 seed resolved .. 4 verified writable apfs)
 # together with the NativeRamBlock counters before the mount is attempted.
 CONFIG_XNU_POLARIS_DATA_TRACE=y
+
+# Boot progress stays off: build-xnu-4k-baseline.sh refuses it unless the
+# audited UFS/owner-root, Virtio and source-corecrypto closure is selected
+# ("Boot progress requires the audited UFS/owner-root, Virtio and
+# source-corecrypto build"), and this board has no Virtio.
+# The thread probe below does not need it.

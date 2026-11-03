@@ -1,0 +1,33 @@
+--- a/osfmk/kern/thread.c
++++ b/osfmk/kern/thread.c
+@@ -243,6 +243,10 @@
+ static struct thread init_thread;
+ static SECURITY_READ_ONLY_LATE(uint32_t) ctid_nonce;
+ COMPACT_ID_TABLE_DEFINE(static, ctid_table);
++
++#if defined(XNU_POLARIS_EXEC_TRACE) && XNU_POLARIS_EXEC_TRACE
++volatile uint32_t native_polaris_thread_seq = 0;
++#endif
+ 
+ __startup_func
+ static void
+@@ -1460,6 +1464,19 @@
+ 	/* Protected by the tasks_threads_lock */
+ 	new_thread->thread_id = ++thread_unique_id;
+ 
++#if defined(XNU_POLARIS_EXEC_TRACE) && XNU_POLARIS_EXEC_TRACE
++	/*
++	 * Count kernel thread creation. Earlier runs aborted in
++	 * ctid_get_thread_unsafe with about 5 MiB free, so threads or the memory
++	 * behind them were exhausted, and a panic shows only the end state. osfmk
++	 * cannot see proc_t here, so this reports the running total only; the total
++	 * alone says whether the machine died from thread churn or from something
++	 * else allocating memory.
++	 */
++	if (++native_polaris_thread_seq % 500 == 0) {
++		panic("POLARIS THREADS n=%u", native_polaris_thread_seq);
++	}
++#endif
+ 	ctid_table_add(new_thread);
+ 
+ 	/* New threads inherit any default state on the task */
