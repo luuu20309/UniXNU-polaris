@@ -321,6 +321,10 @@ def main():
     thread_marker = 'EXTRA_MAKE_ARGS+=("thread.o_CFLAGS_ADD='
     if thread_marker not in script_text:
         thread_line = ('EXTRA_MAKE_ARGS+=("thread.o_CFLAGS_ADD='
+                       '-DXNU_POLARIS_EXEC_TRACE=${XNU_POLARIS_EXEC_TRACE:-0}")\n'
+                       'EXTRA_MAKE_ARGS+=("kern_fork.o_CFLAGS_ADD='
+                       '-DXNU_POLARIS_EXEC_TRACE=${XNU_POLARIS_EXEC_TRACE:-0}")\n'
+                       'EXTRA_MAKE_ARGS+=("compact_id.o_CFLAGS_ADD='
                        '-DXNU_POLARIS_EXEC_TRACE=${XNU_POLARIS_EXEC_TRACE:-0}")\n')
         anchor_line = 'EXTRA_MAKE_ARGS+=("kern_exec.o_CFLAGS_ADD='
         pos = script_text.find(anchor_line)
@@ -329,6 +333,17 @@ def main():
         end = script_text.find('\n', pos)
         script_text = script_text[:end + 1] + thread_line + script_text[end + 1:]
         build_script.write_text(script_text)
+    # ubc_subr.o already carries -DXNU_NATIVE_CS_HASH_CACHE from the pinned
+    # script. Appending a second EXTRA_MAKE_ARGS entry for the same object
+    # replaces the first, which silently removed CS_HASH_CACHE and made
+    # cs_native4k_prepare() disappear entirely -- together with any probe inside
+    # it. Extend the existing line instead.
+    st = build_script.read_text()
+    cs_line = 'EXTRA_MAKE_ARGS+=("ubc_subr.o_CFLAGS_ADD=-DXNU_NATIVE_CS_HASH_CACHE=$CS_HASH_CACHE_MODE")'
+    cs_new = ('EXTRA_MAKE_ARGS+=("ubc_subr.o_CFLAGS_ADD=-DXNU_NATIVE_CS_HASH_CACHE=$CS_HASH_CACHE_MODE '
+              '-DXNU_POLARIS_EXEC_TRACE=${XNU_POLARIS_EXEC_TRACE:-0}")')
+    if cs_line in st and 'XNU_POLARIS_EXEC_TRACE=${XNU_POLARIS_EXEC_TRACE:-0}")' not in st.split(cs_line)[1][:120]:
+        build_script.write_text(st.replace(cs_line, cs_new, 1))
     env.update(kernel.version_env(modules))
     env.update(JOBS=str(args.jobs), PATH=kernel.toolchain_path(), MAKEFLAGS='-k')
     script = ctx.tree / 'scripts/build-xnu-4k-baseline.sh'

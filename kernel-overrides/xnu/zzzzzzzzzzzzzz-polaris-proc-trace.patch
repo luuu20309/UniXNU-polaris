@@ -1,0 +1,33 @@
+--- a/bsd/kern/kern_fork.c
++++ b/bsd/kern/kern_fork.c
+@@ -121,6 +121,10 @@
+ #include <kern/coalition.h>
+ #include <kern/kern_types.h>
+ #include <kern/kalloc.h>
++
++#if defined(XNU_POLARIS_EXEC_TRACE) && XNU_POLARIS_EXEC_TRACE
++volatile uint32_t native_polaris_proc_seq = 0;
++#endif
+ #include <kern/mach_param.h>
+ #include <kern/task.h>
+ #include <kern/thread.h>
+@@ -310,7 +314,19 @@
+ 		 * its task attributes and memory, since when we fork, we
+ 		 * will, in effect, create a duplicate of it, with only minor
+ 		 * differences.  Contrarily, spawned processes do not inherit.
++		 */
++#if defined(XNU_POLARIS_EXEC_TRACE) && XNU_POLARIS_EXEC_TRACE
++		/*
++		 * Count process creation. A thread-count probe placed on
++		 * thread_create_internal() never reached 500 while free memory fell
++		 * from 929 MiB to 5.3 MiB, so the consumer is processes, not threads.
++		 * bsd layer, so the parent's name is available here.
+ 		 */
++		if (++native_polaris_proc_seq <= 60) {
++			panic("POLARIS PROC #%u parent=%s", native_polaris_proc_seq,
++			    (parent_proc && parent_proc->p_name) ? parent_proc->p_name : "?");
++		}
++#endif
+ 		if ((child_thread = cloneproc(proc_task(parent_proc),
+ 		    spawn ? coalitions : NULL,
+ 		    parent_proc,
